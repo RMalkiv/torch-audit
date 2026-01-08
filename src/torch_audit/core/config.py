@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, List, Type
 
 
 @dataclass
@@ -9,6 +9,7 @@ class AuditConfig:
     check_batch_size: bool = True
     monitor_dead_neurons: bool = True
     monitor_graph: bool = True
+    graph_atomic_modules: List[Type] = field(default_factory=list)
 
     # NLP
     monitor_nlp: bool = False

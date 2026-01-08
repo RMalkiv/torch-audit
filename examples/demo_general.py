@@ -1,68 +1,88 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
-
-# Assuming the package is installed or in path
-from torch_audit import Auditor
+from torch_audit import Auditor, AuditConfig
+from torch_audit.core.reporter import LogReporter, RichConsoleReporter
 
 
 class BrokenModel(nn.Module):
     def __init__(self):
         super().__init__()
-        # Issue 1: Dimension 127 is not divisible by 8 (Tensor Core Warning)
+        # Issue 1: Dimension 127 (Not aligned to 8)
         self.fc1 = nn.Linear(64, 127)
         self.relu = nn.ReLU()
         self.fc2 = nn.Linear(127, 10)
-
-        # Issue 2: Zombie Layer (Defined but never used in forward)
-        self.ghost_layer = nn.Linear(128, 128)
+        # Issue 2: Zombie Layer
+        self.ghost = nn.Linear(128, 128)
 
     def forward(self, x):
-        x = self.fc1(x)
-        x = self.relu(x)
-        return self.fc2(x)
+        return self.fc2(self.relu(self.fc1(x)))
 
 
 def run_demo():
     print("\n" + "=" * 60)
-    print("🔥 TORCH-AUDIT: GENERAL FAILURE DEMO")
+    print("🔥 TORCH-AUDIT: GENERAL DEMO")
     print("=" * 60)
 
     model = BrokenModel()
 
-    # Issue 3: Bad Initialization (Causes Dead Neurons)
-    # We force weights negative so ReLU outputs strict zeros
+    # Issue 3: Bad Initialization (Dead Neurons)
     with torch.no_grad():
         model.fc1.weight.fill_(-1.0)
         model.fc1.bias.fill_(-1.0)
 
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    auditor = Auditor(model, optimizer, config={'monitor_graph': True})
 
-    # 1. Static Audit (Architecture & Weights)
+    # 1. Setup Configuration
+    config = AuditConfig(
+        monitor_graph=True,
+        monitor_dead_neurons=True,
+        interval=1
+    )
+
+    # 2. Initialize Auditor
+    # You can pass multiple reporters. Here we show both Console and standard Logging.
+    auditor = Auditor(
+        model,
+        optimizer,
+        config=config,
+        reporters=[RichConsoleReporter(), LogReporter()]
+    )
+
+    # 3. Static Audit
     auditor.audit_static()
 
-    # Create dummy data
     inputs = torch.randn(4, 64)
     targets = torch.randint(0, 10, (4,))
     criterion = nn.CrossEntropyLoss()
 
-    print(f"\n[Running Training Step]...")
+    print(f"\n[Scenario A: Using Context Manager]...")
 
-    # 2. Dynamic Audit (Runtime)
-    # Using the new Context Manager pattern
+    # --- METHOD A: Context Manager ---
+    # Good for granular control inside loops
     with auditor.audit_dynamic():
-        # A. Data Hygiene (Manual call, or integrate into loop)
-        auditor.audit_data(inputs)
+        auditor.audit_data(inputs)  # Manual data check
 
-        # B. Forward Pass
         outputs = model(inputs)
         loss = criterion(outputs, targets)
-
-        # C. Backward (Gradient Checks happen here)
         loss.backward()
         optimizer.step()
+
+    print(f"\n[Scenario B: Using Decorator]...")
+
+    # --- METHOD B: Decorator ---
+    # Cleanest way for function-based steps.
+    # Note: It automatically calls audit_data(inputs) if inputs is the first arg!
+    @auditor.audit_step
+    def train_step(batch_x, batch_y):
+        optimizer.zero_grad()
+        out = model(batch_x)
+        loss = criterion(out, batch_y)
+        loss.backward()
+        optimizer.step()
+
+    # Just call the function normally
+    train_step(inputs, targets)
 
 
 if __name__ == "__main__":
