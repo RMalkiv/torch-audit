@@ -1,45 +1,79 @@
 import torch
 import torch.nn as nn
-from typing import List, Dict, Any
+import math
+from typing import List
+from ...core.validator import Validator
+from ...core.issue import AuditIssue
 
 
-def check_gradients(model: nn.Module, threshold: float = 10.0) -> List[Dict[str, Any]]:
+class GradientValidator(Validator):
     """
     Checks gradient norms AFTER loss.backward() has been run.
-    Optimized to minimize GPU-CPU synchronization points.
+    - Detects Exploding Gradients.
+    - Detects Vanishing/Zero Gradients.
+    - Detects NaNs or Infs (Stability).
     """
-    issues = []
-    grads = [p.grad.detach() for p in model.parameters() if p.grad is not None]
 
-    if not grads:
-        return [{
-            "type": "Gradient Dynamics",
-            "layer": "Global",
-            "message": "No gradients found. Did you forget `loss.backward()` or are all parameters frozen?",
-            "severity": "ERROR"
-        }]
+    def __init__(self, threshold: float = 10.0):
+        self.threshold = threshold
 
-    device = grads[0].device
-    total_norm = torch.zeros(1, device=device)
+    def check_dynamic(self, model: nn.Module) -> List[AuditIssue]:
+        issues = []
 
-    for g in grads:
-        total_norm += g.norm(2) ** 2
+        # 1. Filter parameters that actually have gradients
+        grads = [p.grad.detach() for p in model.parameters() if p.grad is not None]
 
-    total_norm = total_norm.sqrt().item()
+        if not grads:
+            issues.append(AuditIssue(
+                type="Gradient Dynamics",
+                layer="Global",
+                message="No gradients found. Did you forget `loss.backward()` or are all parameters frozen?",
+                severity="ERROR"
+            ))
+            return issues
 
-    if total_norm > threshold:
-        issues.append({
-            "type": "Gradient Dynamics",
-            "layer": "Global",
-            "message": f"Gradient Norm is Exploding ({total_norm:.2f}). Consider using 'torch.nn.utils.clip_grad_norm_'.",
-            "severity": "WARNING"
-        })
-    elif total_norm == 0.0:
-        issues.append({
-            "type": "Gradient Dynamics",
-            "layer": "Global",
-            "message": "Gradient Norm is Zero. The model is not learning (Check frozen layers or detached graph).",
-            "severity": "ERROR"
-        })
+        # 2. Compute Total Norm (Global Gradient Norm) efficiently
+        root_device = grads[0].device
+        total_norm_sq = torch.zeros(1, device=root_device)
 
-    return issues
+        for g in grads:
+            param_norm = g.norm(2)
+
+            # Handle Model Parallelism: Ensure norm is on the accumulation device
+            if param_norm.device != root_device:
+                param_norm = param_norm.to(root_device)
+
+            total_norm_sq += param_norm ** 2
+
+        total_norm = total_norm_sq.sqrt().item()
+
+        # 3. Check for NaNs or Infs (Critical Stability Issue)
+        if math.isnan(total_norm) or math.isinf(total_norm):
+            issues.append(AuditIssue(
+                type="Gradient Stability",
+                layer="Global",
+                message="Gradient Norm is NaN or Infinite. Weights are corrupted.",
+                severity="ERROR"
+            ))
+            return issues
+
+        # 4. Check Exploding Gradients
+        if total_norm > self.threshold:
+            issues.append(AuditIssue(
+                type="Gradient Dynamics",
+                layer="Global",
+                message=f"Gradient Norm is Exploding ({total_norm:.2f} > {self.threshold}). "
+                        f"Consider using `torch.nn.utils.clip_grad_norm_` or lowering learning rate.",
+                severity="WARNING"
+            ))
+
+        # 5. Check Zero Gradients
+        elif total_norm == 0.0:
+            issues.append(AuditIssue(
+                type="Gradient Dynamics",
+                layer="Global",
+                message="Gradient Norm is Zero. The model is not learning (Check frozen layers or detached graph).",
+                severity="ERROR"
+            ))
+
+        return issues
