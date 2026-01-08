@@ -79,8 +79,17 @@ class OptimizerConfigValidator(Validator):
                     issue_msg = f"Weight decay ({wd}) enabled on Bias. Set to 0.0."
                 elif param in safe_params:
                     issue_msg = f"Weight decay ({wd}) enabled on Norm layer. Set to 0.0."
-                elif isinstance(model.get_submodule(name.rsplit('.', 1)[0]), nn.Embedding):
-                    issue_msg = f"Weight decay ({wd}) enabled on Embedding. Consider sparse gradients."
+                else:
+                    parent_mod = model
+                    if '.' in name:
+                        parent_path = name.rsplit('.', 1)[0]
+                        try:
+                            parent_mod = model.get_submodule(parent_path)
+                        except AttributeError:
+                            pass
+
+                    if isinstance(parent_mod, nn.Embedding):
+                        issue_msg = f"Weight decay ({wd}) enabled on Embedding. Consider sparse gradients."
 
                 if issue_msg:
                     issues.append(AuditIssue(

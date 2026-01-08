@@ -7,7 +7,7 @@ from transformers import (
 )
 from datasets import Dataset
 
-from torch_audit import Auditor
+from torch_audit import Auditor, AuditConfig
 from torch_audit.callbacks import HFAuditCallback
 
 
@@ -40,12 +40,11 @@ def run_demo():
     tokenized_datasets = dataset.map(tokenize_function, batched=True)
 
     # 3. Setup Auditor
-    config = {
-        'monitor_nlp': True,
-        'pad_token_id': tokenizer.pad_token_id,
-        'vocab_size': tokenizer.vocab_size,
-        'interval': 1  # Audit every step for this short demo
-    }
+    config = AuditConfig(
+        monitor_nlp=True,
+        pad_token_id=tokenizer.pad_token_id,
+        vocab_size=tokenizer.vocab_size
+    )
     auditor = Auditor(model, config=config)
 
     # 4. Define Trainer with Callback

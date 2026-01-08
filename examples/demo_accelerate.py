@@ -4,7 +4,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from accelerate import Accelerator
 
-from torch_audit import Auditor
+from torch_audit import Auditor, AuditConfig
 
 
 class SimpleModel(nn.Module):
@@ -48,7 +48,8 @@ def run_demo():
     # Auditor automatically handles DDP:
     # - It attaches hooks on ALL processes (required for correct DDP sync)
     # - It prints reports ONLY on Rank 0 (to keep logs clean)
-    auditor = Auditor(model, config={'interval': 2})
+    config = AuditConfig(interval=2)
+    auditor = Auditor(model, config=config)
 
     model.train()
 

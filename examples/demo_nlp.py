@@ -1,16 +1,15 @@
 import torch
 import torch.nn as nn
-from torch_audit import Auditor
+from torch_audit import Auditor, AuditConfig
 
 
 class BadNLPModel(nn.Module):
     def __init__(self, vocab_size=1000):
         super().__init__()
-        # Issue: Padding Index is NOT set
+        # Issue 1: Config has pad_id=0, but Embedding has padding_idx=None
         self.embedding = nn.Embedding(vocab_size, 128)
         self.lstm = nn.LSTM(128, 64, batch_first=True)
-
-        # Issue: Output head not tied to embeddings
+        # Issue 2: Head not tied to embeddings
         self.head = nn.Linear(64, vocab_size)
 
     def forward(self, x):
@@ -26,40 +25,40 @@ def run_demo():
 
     vocab_size = 1000
     pad_id = 0
-    unk_id = 100
 
     model = BadNLPModel(vocab_size)
 
-    config = {
-        'monitor_nlp': True,
-        'pad_token_id': pad_id,
-        'unk_token_id': unk_id,
-        'vocab_size': vocab_size
-    }
+    config = AuditConfig(
+        monitor_nlp=True,
+        pad_token_id=pad_id,
+        vocab_size=vocab_size
+    )
 
     auditor = Auditor(model, config=config)
 
-    print("\n🔍 Starting Static Audit...")
+    print("\n🔍 Static Audit...")
     auditor.audit_static()
 
     print("\n[Simulating Bad Batch]...")
 
-    # Row 1: Normal
-    # Row 2 & 3: 90% Padding
-    input_ids = torch.tensor([
-        [5, 10, 22, 33, 44, 55, 66, 77, 88, 99],
-        [5, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [5, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    ])
-
-    # Inject UNK tokens to trigger that check too
-    input_ids[0, 5:] = 100
+    # Issue 3: Attention Mask Mismatch
+    # We have padding (0) in input_ids, but mask is all 1s (Attention!)
+    batch = {
+        'input_ids': torch.tensor([
+            [5, 10, 22, 0, 0],  # Padding at end
+            [5, 0, 0, 0, 0]
+        ]),
+        'attention_mask': torch.tensor([
+            [1, 1, 1, 1, 1],  # Should be [1, 1, 1, 0, 0]
+            [1, 1, 1, 1, 1]  # Should be [1, 0, 0, 0, 0]
+        ])
+    }
 
     with auditor.audit_dynamic():
-        output = model(input_ids)
+        # Captures mask mismatch
+        auditor.audit_data(batch)
 
-        loss = output.sum()
-        loss.backward()
+        model(batch['input_ids'])
 
 
 if __name__ == "__main__":
