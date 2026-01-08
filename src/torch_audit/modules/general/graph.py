@@ -54,15 +54,20 @@ class GraphMonitor:
                 })
 
             elif count > 1:
-                if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d,
-                                       nn.LayerNorm, nn.GroupNorm, nn.InstanceNorm1d,
-                                       nn.InstanceNorm2d, nn.InstanceNorm3d)):
+                has_running_stats = (
+                    hasattr(module, 'track_running_stats') and
+                    module.track_running_stats and
+                    module.training
+                )
+                if has_running_stats:
                     issues.append({
                         "type": "Logic Error",
                         "layer": name,
-                        "message": f"Normalization layer called {count} times in one pass. "
-                                   f"This corrupts running statistics (mean/var) by mixing features from different depths/timesteps. "
-                                   f"Use distinct Normalization layers for each step.",
+                        "message": (
+                            f"Stateful Normalization layer called {count} times in one pass. "
+                            "This corrupts running statistics (mean/var). "
+                            "Use distinct Normalization layers or distinct copies."
+                        ),
                         "severity": "ERROR"
                     })
 
@@ -70,7 +75,7 @@ class GraphMonitor:
                     issues.append({
                         "type": "Graph Complexity",
                         "layer": name,
-                        "message": f"Layer called {count} times (Weight Tying detected). "
+                        "message": f"Layer called {count} times. "
                                    f"Ensure this is intentional (e.g. RNN or Shared Embeddings). "
                                    f"In DDP, this requires specific bucket configuration.",
                         "severity": "INFO"

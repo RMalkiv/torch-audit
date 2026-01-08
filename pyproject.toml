@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "torch-audit"
-version = "0.1.0"
+version = "0.1.1"
 description = "The Linter for PyTorch: Detects silent training bugs."
 authors = ["Roman Malkiv <malkiv.roman@gmail.com>"]
 readme = "README.md"
