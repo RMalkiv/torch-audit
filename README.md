@@ -190,8 +190,9 @@ You can configure the auditor via a dictionary or the `AuditConfig` object.
 
 ## 🏭 Production Logging
 For headless training where you can't see the console, switch to the `LogReporter`.
+
 ```python
-from torch_audit.core.reporter import LogReporter
+from torch_audit.core_old.reporter import LogReporter
 
 # Writes to standard Python logging (INFO/WARN/ERROR)
 auditor = Auditor(model, reporters=[LogReporter()])

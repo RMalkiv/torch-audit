@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch_audit import Auditor, AuditConfig
-from torch_audit.core.reporter import LogReporter, RichConsoleReporter
+from torch_audit.core_old.reporter import LogReporter, RichConsoleReporter
 
 
 class BrokenModel(nn.Module):

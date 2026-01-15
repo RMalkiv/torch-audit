@@ -1,16 +1,8 @@
-from .core.auditor import Auditor
-from .core.config import AuditConfig
-from .core.reporter import LogReporter, RichConsoleReporter
+from importlib.metadata import PackageNotFoundError, version
 
-from .callbacks import LightningAuditCallback, HFAuditCallback
+try:
+    __version__ = version("torch-audit")
+except PackageNotFoundError:
+    __version__ = "0.0.0-dev"
 
-__version__ = "0.2.0"
-
-__all__ = [
-    "Auditor",
-    "AuditConfig",
-    "LogReporter",
-    "RichConsoleReporter",
-    "LightningAuditCallback",
-    "HFAuditCallback"
-]
+__all__ = ["__version__"]
