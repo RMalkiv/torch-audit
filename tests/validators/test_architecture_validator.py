@@ -2,7 +2,7 @@ import torch.nn as nn
 
 from torch_audit.context import AuditContext, AuditState
 from torch_audit.core import Phase, Severity
-# Updated import from RedundantBiasValidator to ArchitectureValidator
+
 from torch_audit.validators.builtin.architecture import ArchitectureValidator
 
 

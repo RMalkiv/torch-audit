@@ -1,4 +1,3 @@
-# src/torch_audit/validators/builtin/graph.py
 from collections import defaultdict
 from functools import partial
 from typing import Dict, Generator
@@ -36,10 +35,9 @@ class GraphValidator(BaseValidator):
     def __init__(self):
         self.hooks = []
         self.call_counts: Dict[str, int] = defaultdict(int)
+        self._seen_forward: bool = False
         # Atomic modules we don't recurse into
-        self.atomic_modules = (
-            nn.MultiheadAttention, nn.LSTM, nn.GRU, nn.RNN
-        )
+        self.atomic_modules = (nn.MultiheadAttention, nn.LSTM, nn.GRU, nn.RNN)
 
     @property
     def rule(self):
@@ -51,11 +49,13 @@ class GraphValidator(BaseValidator):
 
     @property
     def supported_phases(self):
-        return {Phase.FORWARD, Phase.TRAIN}
+        # Graph instrumentation is based on forward hooks.
+        return {Phase.FORWARD}
 
     def attach(self, model: nn.Module):
         self.detach()
         self.call_counts.clear()
+        self._seen_forward = False
         self._scan_and_hook(model, prefix="")
 
     def detach(self):
@@ -89,14 +89,28 @@ class GraphValidator(BaseValidator):
         self.hooks.append(hook)
 
     def _hook_fn(self, name: str, module, input, output):
+        # Mark that we observed at least one forward call.
+        self._seen_forward = True
         self.call_counts[name] += 1
+
+    def on_phase_start(self, context: AuditContext) -> None:
+        # Reset per-forward call counts so we don't accumulate counts across steps.
+        if context.phase == Phase.FORWARD:
+            self._seen_forward = False
+            for k in self.call_counts:
+                self.call_counts[k] = 0
 
     def check(self, context: AuditContext) -> Generator[Finding, None, None]:
         # Only check this if we actually tracked something
         if not self.call_counts:
             return
 
-        name_to_module = dict(context.model.named_modules())
+        # Don't emit "unused" findings before we've observed a forward pass.
+        # This avoids false positives when a user runs "data-only" audits.
+        if not self._seen_forward:
+            return
+
+        name_to_module: dict[str, nn.Module] = dict(context.model.named_modules())
 
         for name, count in self.call_counts.items():
             module = name_to_module.get(name)
@@ -110,14 +124,15 @@ class GraphValidator(BaseValidator):
                     message="Layer defined but NEVER called (Zombie).",
                     severity=Severity.ERROR,
                     module_path=name,
+                    step=context.step,
+                    phase=context.phase,
                 )
 
             # TA501: Reuse
             elif count > 1:
                 # Check if stateful (BN, Dropout, etc)
-                is_stateful = (
-                        hasattr(module, "track_running_stats")
-                        and getattr(module, "track_running_stats", False)
+                is_stateful = hasattr(module, "track_running_stats") and getattr(
+                    module, "track_running_stats", False
                 )
                 if is_stateful and module.training:
                     yield Finding(
@@ -125,6 +140,8 @@ class GraphValidator(BaseValidator):
                         message=f"Stateful layer called {count} times in one pass.",
                         severity=Severity.ERROR,
                         module_path=name,
+                        step=context.step,
+                        phase=context.phase,
                     )
 
         # Reset after reporting

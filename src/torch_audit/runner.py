@@ -56,10 +56,21 @@ class AuditRunner:
         except Exception:
             pass
 
-    def run_step(self, context: AuditContext):
+    def run_step(
+        self, context: AuditContext, validators: List[BaseValidator] | None = None
+    ):
+        """Run validators for a given context.
+
+        Args:
+            context: The audit context for the current phase/step.
+            validators: Optional subset of validators to execute. If None,
+                runs the runner's full validator list.
+        """
+        selected = validators if validators is not None else self.validators
+
         active_validators = [
             v
-            for v in self.validators
+            for v in selected
             if v.supported_phases is None or context.phase in v.supported_phases
         ]
 

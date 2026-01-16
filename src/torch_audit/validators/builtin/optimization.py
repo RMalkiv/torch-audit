@@ -67,7 +67,7 @@ class OptimizerValidator(BaseValidator):
                 yield Finding(
                     rule_id=TA401_ADAMW.id,
                     message="Found `torch.optim.Adam` with `weight_decay > 0`. "
-                            "This applies L2 regularization, not decoupled weight decay.",
+                    "This applies L2 regularization, not decoupled weight decay.",
                     severity=TA401_ADAMW.default_severity,
                 )
 

@@ -66,7 +66,7 @@ class ArchitectureValidator(BaseValidator):
                 yield from self._check_conv(name, module)
 
     def _check_sequential(
-            self, seq_name: str, seq: nn.Sequential
+        self, seq_name: str, seq: nn.Sequential
     ) -> Generator[Finding, None, None]:
         prev_name = None
         prev_mod = None
@@ -86,7 +86,7 @@ class ArchitectureValidator(BaseValidator):
             prev_mod = mod
 
     def _check_conv(
-            self, name: str, layer: nn.Module
+        self, name: str, layer: nn.Module
     ) -> Generator[Finding, None, None]:
         # --- TA404: Even Kernel ---
         # kernel_size can be int or tuple
@@ -126,7 +126,10 @@ class ArchitectureValidator(BaseValidator):
                     message=f"Layer '{name}' has {dead_count} dead filters (near-zero weights).",
                     severity=TA405_DEAD_FILTERS.default_severity,
                     module_path=name,
-                    metadata={"dead_count": int(dead_count), "total_filters": w.shape[0]},
+                    metadata={
+                        "dead_count": int(dead_count),
+                        "total_filters": w.shape[0],
+                    },
                 )
 
     def _is_redundant(self, prev: nn.Module, curr: nn.Module) -> bool:

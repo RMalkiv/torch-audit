@@ -1,4 +1,3 @@
-# src/torch_audit/validators/builtin/hardware.py
 from itertools import chain
 from typing import Generator, Set
 
@@ -61,7 +60,12 @@ class HardwareValidator(BaseValidator):
 
     @property
     def rules(self):
-        return [TA200_TENSOR_CORE, TA201_CHANNELS_LAST, TA202_DEVICE_PLACEMENT, TA203_PRECISION]
+        return [
+            TA200_TENSOR_CORE,
+            TA201_CHANNELS_LAST,
+            TA202_DEVICE_PLACEMENT,
+            TA203_PRECISION,
+        ]
 
     @property
     def supported_phases(self):

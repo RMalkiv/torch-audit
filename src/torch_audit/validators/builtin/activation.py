@@ -1,4 +1,3 @@
-# src/torch_audit/validators/builtin/activation.py
 from functools import partial
 from typing import Dict, Generator
 
@@ -28,9 +27,18 @@ class ActivationValidator(BaseValidator):
         self.hooks = []
         self.dead_counts: Dict[str, float] = {}
         self.target_classes = (
-            nn.ReLU, nn.ReLU6, nn.LeakyReLU, nn.PReLU, nn.RReLU,
-            nn.SELU, nn.CELU, nn.ELU, nn.Threshold,
-            nn.Hardswish, nn.Hardsigmoid, nn.SiLU
+            nn.ReLU,
+            nn.ReLU6,
+            nn.LeakyReLU,
+            nn.PReLU,
+            nn.RReLU,
+            nn.SELU,
+            nn.CELU,
+            nn.ELU,
+            nn.Threshold,
+            nn.Hardswish,
+            nn.Hardsigmoid,
+            nn.SiLU,
         )
 
     @property
@@ -39,7 +47,9 @@ class ActivationValidator(BaseValidator):
 
     @property
     def supported_phases(self):
-        return {Phase.FORWARD, Phase.TRAIN}
+        # Runtime hooks collect activations during forward passes.
+        # (A broader TRAIN phase isn't modeled in the current Phase enum.)
+        return {Phase.FORWARD}
 
     def attach(self, model: nn.Module):
         """Registers forward hooks to monitor activations."""
@@ -70,10 +80,15 @@ class ActivationValidator(BaseValidator):
 
         if t_out.numel() > 0:
             # Simple sparsity check: count zeros
-            is_zero = (t_out == 0)
+            is_zero = t_out == 0
             sparsity = is_zero.float().mean().item()
             # We store the latest sparsity; could be moving average in future
             self.dead_counts[name] = sparsity
+
+    def on_phase_start(self, context: AuditContext) -> None:
+        # Ensure we only ever report activations from the current forward.
+        if context.phase == Phase.FORWARD:
+            self.dead_counts.clear()
 
     def check(self, context: AuditContext) -> Generator[Finding, None, None]:
         # If hooks haven't been attached, we can't do anything.
@@ -86,6 +101,8 @@ class ActivationValidator(BaseValidator):
                     message=f"{sparsity:.1%} of neurons are dead (outputting 0).",
                     severity=Severity.WARN,
                     module_path=name,
+                    step=context.step,
+                    phase=context.phase,
                     metadata={"sparsity": sparsity},
                 )
 

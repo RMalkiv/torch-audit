@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Generator, Optional, Sequence, Set
+from typing import Any, Generator, Optional, Sequence, Set
 
 from .context import AuditContext
 from .core import Finding, Phase, Rule
@@ -41,3 +41,20 @@ class BaseValidator(ABC):
     @abstractmethod
     def check(self, context: AuditContext) -> Generator[Finding, None, None]:
         pass
+
+    # --- Optional lifecycle hooks (runtime auditing) ---
+    #
+    # Stateless validators can ignore these.
+    # Stateful validators (e.g. forward-hook based) can override attach/detach
+    # and/or on_phase_start/on_phase_end.
+    def attach(self, model: Any) -> None:
+        """Optional: attach instrumentation to a model (e.g., register hooks)."""
+
+    def detach(self) -> None:
+        """Optional: detach instrumentation from a model (e.g., remove hooks)."""
+
+    def on_phase_start(self, context: AuditContext) -> None:
+        """Optional: called before a phase runs (e.g., before forward/backward)."""
+
+    def on_phase_end(self, context: AuditContext) -> None:
+        """Optional: called after a phase runs (e.g., after forward/backward)."""

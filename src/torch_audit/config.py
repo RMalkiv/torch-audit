@@ -69,3 +69,12 @@ class AuditConfig:
             if suppression.matches(finding):
                 return True
         return False
+
+    # --- Compatibility / Convenience ---
+    def should_show(self, finding: Finding) -> bool:
+        """Return True if a finding should be shown (i.e. not suppressed).
+
+        Historically some callers/tests used `should_show()` instead of
+        `is_suppressed()`. Keeping this alias avoids breaking consumers.
+        """
+        return not self.is_suppressed(finding)

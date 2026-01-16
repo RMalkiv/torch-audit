@@ -25,3 +25,26 @@ def load_default_validators() -> List[BaseValidator]:
 
     # 3. Instantiate
     return [cls() for cls in DEFAULT_CLASSES]
+
+
+def load_runtime_validators() -> List[BaseValidator]:
+    """Load validators suitable for **runtime** / training-loop audits.
+
+    This includes the default stateless validators plus stateful, hook-based
+    validators (e.g., Graph / Activation) that require attach/detach.
+    """
+
+    # Start with the standard validators.
+    validators: List[BaseValidator] = load_default_validators()
+
+    # Add runtime/stateful validators.
+    from .validators.builtin.activation import ActivationValidator
+    from .validators.builtin.graph import GraphValidator
+
+    validators.extend(
+        [
+            GraphValidator(),
+            ActivationValidator(),
+        ]
+    )
+    return validators

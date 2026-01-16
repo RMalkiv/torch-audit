@@ -1,4 +1,3 @@
-# src/torch_audit/context.py
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, Optional, Tuple
 

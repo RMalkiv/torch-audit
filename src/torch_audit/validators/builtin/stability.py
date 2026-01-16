@@ -118,7 +118,7 @@ class StabilityValidator(BaseValidator):
 
                     p_norm = safe_norm(param.grad)
                     if p_norm is not None:
-                        total_grad_norm_sq += p_norm ** 2
+                        total_grad_norm_sq += p_norm**2
 
                     if p_norm == 0.0:
                         yield Finding(
@@ -134,7 +134,7 @@ class StabilityValidator(BaseValidator):
             # 3. Finalize Global Checks
             if check_grads:
                 if has_grads:
-                    global_norm = total_grad_norm_sq ** 0.5
+                    global_norm = total_grad_norm_sq**0.5
                     if global_norm > self.max_grad_norm:
                         yield Finding(
                             rule_id=TA102_GRAD_EXPLOSION.id,

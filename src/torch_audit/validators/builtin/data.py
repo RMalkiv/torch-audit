@@ -174,13 +174,16 @@ class DataValidator(BaseValidator):
                 )
 
     def _check_hygiene(
-            self, t: torch.Tensor, path: str, model: torch.nn.Module
+        self, t: torch.Tensor, path: str, model: torch.nn.Module
     ) -> Generator[Finding, None, None]:
         # TA304: Tiny Batch (only if BatchNorm is present)
         # We perform a lightweight check for BatchNorm existence
         if t.ndim > 0 and t.shape[0] < 8:
             has_bn = any(
-                isinstance(m, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d))
+                isinstance(
+                    m,
+                    (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d),
+                )
                 for m in model.modules()
             )
             if has_bn:

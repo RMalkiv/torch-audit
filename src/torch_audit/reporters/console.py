@@ -54,7 +54,8 @@ class ConsoleReporter:
         self.console.print(f"[justify=center]{header_text}[/justify]")
         if result.baseline_applied:
             self.console.print(
-                f"[justify=center][dim]Baseline Applied: {result.new_findings_count} new findings[/dim][/justify]")
+                f"[justify=center][dim]Baseline Applied: {result.new_findings_count} new findings[/dim][/justify]"
+            )
         self.console.print()
 
         # 2. Group & Sort

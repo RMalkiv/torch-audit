@@ -5,8 +5,7 @@ import traceback
 import click
 import torch
 
-from .api import audit as run_audit
-from .config import Severity
+from .api import audit
 from .core import Phase
 from .reporters.console import ConsoleReporter
 from .reporters.json import JSONReporter
@@ -59,16 +58,18 @@ def parse_rule_list(ctx, param, value):
 @click.command()
 @click.argument("target", required=True)
 @click.option(
-    "--format", "-f",
+    "--format",
+    "-f",
     type=click.Choice(["rich", "json", "sarif"], case_sensitive=False),
     multiple=True,
     default=["rich"],
-    help="Output format(s). Can be specified multiple times. Default: rich."
+    help="Output format(s). Can be specified multiple times. Default: rich.",
 )
 @click.option(
-    "--output", "-o",
+    "--output",
+    "-o",
     type=click.Path(writable=True),
-    help="Output file for machine-readable formats (JSON/SARIF)."
+    help="Output file for machine-readable formats (JSON/SARIF).",
 )
 @click.option(
     "--fail-level",
@@ -98,37 +99,35 @@ def parse_rule_list(ctx, param, value):
     "--select",
     multiple=True,
     callback=parse_rule_list,
-    help="Only run specific rules (by ID). Can be comma-separated."
+    help="Only run specific rules (by ID). Can be comma-separated.",
 )
 @click.option(
     "--ignore",
     multiple=True,
     callback=parse_rule_list,
-    help="Ignore specific rules (by ID). Can be comma-separated."
+    help="Ignore specific rules (by ID). Can be comma-separated.",
 )
 @click.option(
-    "--show-suppressed",
-    is_flag=True,
-    help="Include suppressed findings in the output."
+    "--show-suppressed", is_flag=True, help="Include suppressed findings in the output."
 )
 @click.option(
     "--ignore-internal-errors",
     is_flag=True,
-    help="Suppress internal validator crashes (TA000)."
+    help="Suppress internal validator crashes (TA000).",
 )
 def main(
-        target: str,
-        format,
-        output,
-        fail_level: str,
-        phase: str,
-        step: int,
-        baseline: str,
-        update_baseline: bool,
-        select,
-        ignore,
-        show_suppressed,
-        ignore_internal_errors,
+    target: str,
+    format,
+    output,
+    fail_level: str,
+    phase: str,
+    step: int,
+    baseline: str,
+    update_baseline: bool,
+    select,
+    ignore,
+    show_suppressed,
+    ignore_internal_errors,
 ):
     """
     Audit a PyTorch model for stability and performance issues.
@@ -144,7 +143,7 @@ def main(
 
     # 2. Run Audit (via Library API)
     try:
-        result = run_audit(
+        result = audit(
             model=model,
             step=step,
             phase=phase,
@@ -152,8 +151,12 @@ def main(
             show_report=False,
             baseline_file=baseline,
             update_baseline=update_baseline,
+            # CLI filters & behavior toggles
+            select_rules=select or None,
+            ignore_rules=ignore or None,
+            show_suppressed=bool(show_suppressed),
+            suppress_internal_errors=bool(ignore_internal_errors),
         )
-
 
     except Exception as e:
         click.secho(f"Error running audit: {e}", err=True)
@@ -166,7 +169,10 @@ def main(
     file_formats = {"json", "sarif"}
     requested_file_formats = formats.intersection(file_formats)
     if output and len(requested_file_formats) > 1:
-        click.echo("Error: --output cannot be used with multiple file formats (JSON + SARIF).", err=True)
+        click.echo(
+            "Error: --output cannot be used with multiple file formats (JSON + SARIF).",
+            err=True,
+        )
         sys.exit(1)
 
     if "rich" in formats:

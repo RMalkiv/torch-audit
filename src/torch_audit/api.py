@@ -1,5 +1,4 @@
-# src/torch_audit/api.py
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional, Set, Union
 
 import torch
 
@@ -25,6 +24,11 @@ def audit(
     strict: bool = False,
     baseline_file: Optional[str] = None,
     update_baseline: bool = False,
+    # CLI / filtering controls
+    select_rules: Optional[Set[str]] = None,
+    ignore_rules: Optional[Set[str]] = None,
+    show_suppressed: bool = False,
+    suppress_internal_errors: bool = False,
 ) -> AuditResult:
     """
     Run a one-shot audit on the given model.
@@ -56,6 +60,10 @@ def audit(
         fail_level=fail_level,
         baseline_file=baseline_file,
         update_baseline=update_baseline,
+        select_rules=select_rules,
+        ignore_rules=ignore_rules,
+        show_suppressed=show_suppressed,
+        suppress_internal_errors=suppress_internal_errors,
     )
 
     # 4. Load Validators (Lazy)

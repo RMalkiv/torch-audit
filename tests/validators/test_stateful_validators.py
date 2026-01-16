@@ -21,7 +21,9 @@ def test_ta105_activation_collapse():
 
     validator = ActivationValidator(threshold=0.90)
     validator.attach(model)
-    _ = model(torch.randn(2, 5))
+    # Deterministic: with weight=-1 and bias=-1, an all-ones input guarantees
+    # negative pre-activations, producing 100% zeros after ReLU.
+    _ = model(torch.ones(2, 5))
 
     # FIX: Use AuditState
     state = AuditState(model=model, phase=Phase.FORWARD, step=0)
