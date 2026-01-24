@@ -1,7 +1,7 @@
 import json
 import os
 import traceback
-from typing import Dict, List, Set
+import warnings
 
 from .config import AuditConfig
 from .context import AuditContext
@@ -22,14 +22,14 @@ RuleRegistry.register(INTERNAL_ERROR_RULE)
 
 
 class AuditRunner:
-    def __init__(self, config: AuditConfig, validators: List[BaseValidator]):
+    def __init__(self, config: AuditConfig, validators: list[BaseValidator]):
         self.config = config
         self.validators = validators
-        self.findings: List[Finding] = []
+        self.findings: list[Finding] = []
         self.suppressed_count: int = 0
 
         # 1. Build Rule Map & Detect Duplicates
-        self.rules_map: Dict[str, Rule] = {}
+        self.rules_map: dict[str, Rule] = {}
         for v in validators:
             for r in v.rules:
                 if r.id in self.rules_map:
@@ -41,7 +41,7 @@ class AuditRunner:
 
         self.rules_map[INTERNAL_ERROR_RULE.id] = INTERNAL_ERROR_RULE
 
-        self.baseline_fingerprints: Set[str] = set()
+        self.baseline_fingerprints: set[str] = set()
         if self.config.baseline_file and not self.config.update_baseline:
             self._load_baseline()
 
@@ -53,11 +53,15 @@ class AuditRunner:
                 data = json.load(f)
                 if isinstance(data, list):
                     self.baseline_fingerprints = set(data)
-        except Exception:
-            pass
+        except Exception as e:
+            warnings.warn(
+                f"Failed to load baseline file '{self.config.baseline_file}': {e}. Proceeding without baseline.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     def run_step(
-        self, context: AuditContext, validators: List[BaseValidator] | None = None
+        self, context: AuditContext, validators: list[BaseValidator] | None = None
     ):
         """Run validators for a given context.
 
@@ -83,9 +87,16 @@ class AuditRunner:
                             f"Validator '{type(validator).__name__}' declared rules {sorted(validator.emits_rule_ids)} "
                             f"but illegally emitted finding with Rule ID '{finding.rule_id}'."
                         )
+
+                    # Normalize finding context. Many validators omit phase/step.
+                    # The runner is the source of truth for the current execution phase.
+                    finding.phase = context.phase
+                    if finding.step is None:
+                        finding.step = context.step
+
                     self._process_finding(finding)
             except Exception as e:
-                self._handle_crash(validator, e)
+                self._handle_crash(validator, e, context)
 
     def _process_finding(self, finding: Finding):
         # 1. Check Rule Filtering (--select / --ignore)
@@ -106,7 +117,9 @@ class AuditRunner:
             finding.metadata = sanitize_metadata(finding.metadata)
             self.findings.append(finding)
 
-    def _handle_crash(self, validator: BaseValidator, e: Exception):
+    def _handle_crash(
+        self, validator: BaseValidator, e: Exception, context: AuditContext
+    ):
         if self.config.suppress_internal_errors:
             return
 
@@ -116,6 +129,8 @@ class AuditRunner:
             severity=INTERNAL_ERROR_RULE.default_severity,
             metadata={"traceback": traceback.format_exc()},
         )
+        crash_finding.phase = context.phase
+        crash_finding.step = context.step
         self._process_finding(crash_finding)
 
     def finish(self) -> AuditResult:

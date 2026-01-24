@@ -1,7 +1,7 @@
 import dataclasses
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .utils.fingerprints import stable_fingerprint
 
@@ -53,7 +53,7 @@ class Rule:
     category: str
     default_severity: Severity
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "title": self.title,
@@ -70,12 +70,12 @@ class Finding:
     message: str
     severity: Severity
 
-    module_path: Optional[str] = None
-    entity: Optional[str] = None
-    step: Optional[int] = None
+    module_path: str | None = None
+    entity: str | None = None
+    step: int | None = None
     phase: Phase = Phase.STATIC
 
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     # New field to support --show-suppressed
     suppressed: bool = False
@@ -84,7 +84,7 @@ class Finding:
         """Stable identity: v{VER}:{rule}::{module}::{entity}"""
         return stable_fingerprint(self.rule_id, self.module_path, self.entity)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Serializes the finding to a dictionary.
         Handles Enum conversion (Severity/Phase) automatically.
@@ -98,11 +98,11 @@ class Finding:
 
 @dataclass
 class AuditResult:
-    findings: List[Finding]
+    findings: list[Finding]
     exit_code: int
     max_severity: Severity
     max_severity_all: Severity = Severity.INFO
     new_findings_count: int = 0
     baseline_applied: bool = False
     suppressed_count: int = 0
-    rules: Dict[str, Rule] = field(default_factory=dict)
+    rules: dict[str, Rule] = field(default_factory=dict)

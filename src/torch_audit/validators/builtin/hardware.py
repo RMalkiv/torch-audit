@@ -1,5 +1,5 @@
+from collections.abc import Generator
 from itertools import chain
-from typing import Generator, Set
 
 import torch
 import torch.nn as nn
@@ -69,7 +69,9 @@ class HardwareValidator(BaseValidator):
 
     @property
     def supported_phases(self):
-        return {Phase.STATIC, Phase.INIT}
+        # Hardware / placement checks are effectively static and do not need to
+        # run again during INIT by default (avoids duplicate findings).
+        return {Phase.STATIC}
 
     def check(self, context: AuditContext) -> Generator[Finding, None, None]:
         # 1. Device Placement (TA202)
@@ -85,7 +87,7 @@ class HardwareValidator(BaseValidator):
         yield from self._check_precision(context.model)
 
     def _check_devices(self, model: nn.Module) -> Generator[Finding, None, None]:
-        devices: Set[str] = set()
+        devices: set[str] = set()
         for tensor in chain(model.parameters(), model.buffers()):
             # Handle possible undefined devices or complex scenarios robustly
             if tensor.device.type == "cpu":
@@ -105,7 +107,7 @@ class HardwareValidator(BaseValidator):
             yield Finding(
                 rule_id=TA202_DEVICE_PLACEMENT.id,
                 message=f"Model parameters are split across devices: {sorted(devices)}. "
-                        "This may cause RuntimeErrors or performance degradation.",
+                "This may cause RuntimeErrors or performance degradation.",
                 severity=Severity.ERROR,
                 metadata={"devices": list(devices)},
             )

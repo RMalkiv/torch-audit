@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Pattern, Set
+from re import Pattern
 
 from .core import Finding, Severity
 
@@ -9,9 +9,9 @@ from .core import Finding, Severity
 class Suppression:
     rule_id: str
     reason: str
-    module_regex: Optional[str] = None
+    module_regex: str | None = None
 
-    _regex: Optional[Pattern] = field(init=False, repr=False, default=None)
+    _regex: Pattern | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self):
         self._regex = None
@@ -42,14 +42,14 @@ class AuditConfig:
     fail_level: Severity = Severity.ERROR
 
     suppress_internal_errors: bool = False
-    suppressions: List[Suppression] = field(default_factory=list)
+    suppressions: list[Suppression] = field(default_factory=list)
 
-    baseline_file: Optional[str] = None
+    baseline_file: str | None = None
     update_baseline: bool = False
 
     # New CLI Options
-    select_rules: Optional[Set[str]] = None
-    ignore_rules: Optional[Set[str]] = None
+    select_rules: set[str] | None = None
+    ignore_rules: set[str] | None = None
     show_suppressed: bool = False
 
     def is_failure(self, severity: Severity) -> bool:

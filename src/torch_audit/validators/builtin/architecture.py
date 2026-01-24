@@ -1,4 +1,4 @@
-from typing import Generator
+from collections.abc import Generator
 
 import torch
 import torch.nn as nn
@@ -53,7 +53,8 @@ class ArchitectureValidator(BaseValidator):
 
     @property
     def supported_phases(self):
-        return {Phase.STATIC, Phase.INIT}
+        # Architecture checks are static by nature.
+        return {Phase.STATIC}
 
     def check(self, context: AuditContext) -> Generator[Finding, None, None]:
         # 1. Sequential Checks (TA400)
@@ -112,7 +113,7 @@ class ArchitectureValidator(BaseValidator):
 
         with torch.no_grad():
             # Flatten all dims except the first (Out Channels)
-            w_flat = w.view(w.shape[0], -1)
+            w_flat = w.reshape(w.shape[0], -1)
             # L2 norm per filter
             norms = torch.norm(w_flat, p=2, dim=1)
 

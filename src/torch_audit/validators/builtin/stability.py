@@ -1,4 +1,4 @@
-from typing import Generator
+from collections.abc import Generator
 
 import torch
 
@@ -66,10 +66,16 @@ class StabilityValidator(BaseValidator):
 
     @property
     def supported_phases(self):
-        return {Phase.STATIC, Phase.INIT, Phase.BACKWARD, Phase.OPTIMIZER}
+        # Stability checks are meaningful for:
+        #  - STATIC: one-shot parameter sanity (NaN/Inf in weights)
+        #  - BACKWARD: gradient health
+        #  - OPTIMIZER: post-step parameter/gradient sanity
+        # INIT is intentionally skipped to avoid duplicate findings when users
+        # run both static + init at startup.
+        return {Phase.STATIC, Phase.BACKWARD, Phase.OPTIMIZER}
 
     def check(self, context: AuditContext) -> Generator[Finding, None, None]:
-        check_weights = context.phase in [Phase.INIT, Phase.STATIC, Phase.OPTIMIZER]
+        check_weights = context.phase in [Phase.STATIC, Phase.OPTIMIZER]
         check_grads = context.phase in [Phase.BACKWARD, Phase.OPTIMIZER]
 
         if not (check_weights or check_grads):

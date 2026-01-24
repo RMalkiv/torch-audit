@@ -8,12 +8,7 @@ from torch_audit.validators.builtin.optimization import OptimizerValidator
 
 # --- Helper to build context with optimizer ---
 def create_opt_context(model, opt):
-    state = AuditState(
-        model=model,
-        step=0,
-        phase=Phase.STATIC,
-        optimizer=opt
-    )
+    state = AuditState(model=model, step=0, phase=Phase.STATIC, optimizer=opt)
     return AuditContext(state)
 
 
@@ -96,10 +91,7 @@ def test_ta402_correct_parameter_groups():
     If the user correctly splits param groups (decay vs no-decay),
     no findings should occur.
     """
-    model = nn.Sequential(
-        nn.Linear(10, 10, bias=True),
-        nn.BatchNorm1d(10)
-    )
+    model = nn.Sequential(nn.Linear(10, 10, bias=True), nn.BatchNorm1d(10))
 
     linear = model[0]
     bn = model[1]

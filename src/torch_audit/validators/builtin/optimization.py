@@ -1,4 +1,4 @@
-from typing import Generator
+from collections.abc import Generator
 
 import torch
 import torch.nn as nn
@@ -51,7 +51,9 @@ class OptimizerValidator(BaseValidator):
 
     @property
     def supported_phases(self):
-        return {Phase.STATIC, Phase.INIT}
+        # Optimizer configuration checks should run once when an optimizer is
+        # available (INIT). Running in STATIC commonly causes duplicates.
+        return {Phase.INIT}
 
     def check(self, context: AuditContext) -> Generator[Finding, None, None]:
         opt = context.optimizer

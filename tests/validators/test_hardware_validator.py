@@ -63,10 +63,7 @@ def test_ta202_split_brain():
     if not torch.cuda.is_available():
         pytest.skip("Skipping split-brain test (requires CUDA)")
 
-    model = nn.Sequential(
-        nn.Linear(10, 10).cpu(),
-        nn.Linear(10, 10).cuda()
-    )
+    model = nn.Sequential(nn.Linear(10, 10).cpu(), nn.Linear(10, 10).cuda())
 
     validator = HardwareValidator()
     findings = list(validator.check(create_ctx(model)))

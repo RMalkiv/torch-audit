@@ -1,5 +1,5 @@
+from collections.abc import Generator
 from functools import partial
-from typing import Dict, Generator
 
 import torch
 import torch.nn as nn
@@ -25,7 +25,7 @@ class ActivationValidator(BaseValidator):
     def __init__(self, threshold: float = 0.90):
         self.threshold = threshold
         self.hooks = []
-        self.dead_counts: Dict[str, float] = {}
+        self.dead_counts: dict[str, float] = {}
         self.target_classes = (
             nn.ReLU,
             nn.ReLU6,

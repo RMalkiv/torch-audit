@@ -1,9 +1,9 @@
-from typing import Generator
+from collections.abc import Generator
 
 import torch
 
 from ...context import AuditContext
-from ...core import Finding, Rule, Severity
+from ...core import Finding, Phase, Rule, Severity
 from ...registry import RuleRegistry
 from ...validator import BaseValidator
 
@@ -72,6 +72,29 @@ RuleRegistry.register(TA305_INVALID_INPUT)
 
 
 class DataValidator(BaseValidator):
+    def __init__(self) -> None:
+        # Cache whether the current model contains BatchNorm layers.
+        # This avoids repeatedly scanning model.modules() for every tensor in a batch.
+        self._has_bn_cached_model_id: int | None = None
+        self._has_bn_cached: bool = False
+
+    def _model_has_batchnorm(self, model: torch.nn.Module) -> bool:
+        mid = id(model)
+        if mid != self._has_bn_cached_model_id:
+            self._has_bn_cached_model_id = mid
+            self._has_bn_cached = any(
+                isinstance(
+                    m,
+                    (
+                        torch.nn.BatchNorm1d,
+                        torch.nn.BatchNorm2d,
+                        torch.nn.BatchNorm3d,
+                    ),
+                )
+                for m in model.modules()
+            )
+        return self._has_bn_cached
+
     @property
     def rule(self):
         return TA300_INPUT_DEVICE
@@ -87,6 +110,11 @@ class DataValidator(BaseValidator):
             TA305_INVALID_INPUT,
         ]
 
+    @property
+    def supported_phases(self):
+        # Data checks are meaningful during the forward phase (real batches).
+        return {Phase.FORWARD}
+
     def check(self, context: AuditContext) -> Generator[Finding, None, None]:
         if context.batch is None:
             return
@@ -99,7 +127,7 @@ class DataValidator(BaseValidator):
 
         # We iterate safely looking for tensors
         for path, tensor in context.iter_batch_tensors():
-            if model_device is not None and tensor.device.type != model_device.type:
+            if model_device is not None and tensor.device != model_device:
                 if tensor.numel() > 1 and tensor.dtype in (
                     torch.float16,
                     torch.float32,
@@ -179,14 +207,7 @@ class DataValidator(BaseValidator):
         # TA304: Tiny Batch (only if BatchNorm is present)
         # We perform a lightweight check for BatchNorm existence
         if t.ndim > 0 and t.shape[0] < 8:
-            has_bn = any(
-                isinstance(
-                    m,
-                    (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d),
-                )
-                for m in model.modules()
-            )
-            if has_bn:
+            if self._model_has_batchnorm(model):
                 yield Finding(
                     rule_id=TA304_TINY_BATCH.id,
                     message=f"Tiny batch size ({t.shape[0]}) detected with BatchNorm layers.",

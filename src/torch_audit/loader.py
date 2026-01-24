@@ -1,9 +1,7 @@
-from typing import List, Type
-
 from .validator import BaseValidator
 
 
-def load_default_validators() -> List[BaseValidator]:
+def load_default_validators() -> list[BaseValidator]:
     """
     Instantiates and returns the standard set of validators.
     """
@@ -15,7 +13,7 @@ def load_default_validators() -> List[BaseValidator]:
     from .validators.builtin.stability import StabilityValidator
 
     # 2. Define the Default Registry
-    DEFAULT_CLASSES: List[Type[BaseValidator]] = [
+    DEFAULT_CLASSES: list[type[BaseValidator]] = [
         StabilityValidator,
         ArchitectureValidator,
         OptimizerValidator,
@@ -27,7 +25,7 @@ def load_default_validators() -> List[BaseValidator]:
     return [cls() for cls in DEFAULT_CLASSES]
 
 
-def load_runtime_validators() -> List[BaseValidator]:
+def load_runtime_validators() -> list[BaseValidator]:
     """Load validators suitable for **runtime** / training-loop audits.
 
     This includes the default stateless validators plus stateful, hook-based
@@ -35,7 +33,7 @@ def load_runtime_validators() -> List[BaseValidator]:
     """
 
     # Start with the standard validators.
-    validators: List[BaseValidator] = load_default_validators()
+    validators: list[BaseValidator] = load_default_validators()
 
     # Add runtime/stateful validators.
     from .validators.builtin.activation import ActivationValidator

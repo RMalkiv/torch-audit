@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 import torch
 
@@ -48,7 +48,7 @@ def json_safe(obj: Any, depth: int = 0, max_depth: int = 10) -> Any:
     return str(obj)
 
 
-def sanitize_metadata(meta: Dict[str, Any]) -> Dict[str, Any]:
+def sanitize_metadata(meta: dict[str, Any]) -> dict[str, Any]:
     """
     Converts tensors to metadata dicts and ensures JSON safety.
     """

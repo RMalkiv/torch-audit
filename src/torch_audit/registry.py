@@ -1,10 +1,8 @@
-from typing import Dict, List, Optional
-
 from .core import Rule
 
 
 class RuleRegistry:
-    _rules: Dict[str, Rule] = {}
+    _rules: dict[str, Rule] = {}
 
     @classmethod
     def register(cls, rule: Rule):
@@ -16,11 +14,11 @@ class RuleRegistry:
         cls._rules[rule.id] = rule
 
     @classmethod
-    def all_rules(cls) -> List[Rule]:
+    def all_rules(cls) -> list[Rule]:
         return sorted(cls._rules.values(), key=lambda r: r.id)
 
     @classmethod
-    def get(cls, rule_id: str) -> Optional[Rule]:
+    def get(cls, rule_id: str) -> Rule | None:
         return cls._rules.get(rule_id)
 
     @classmethod

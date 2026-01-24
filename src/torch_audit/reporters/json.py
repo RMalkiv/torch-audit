@@ -1,6 +1,6 @@
 import dataclasses
 import json
-from typing import Any, Optional, TextIO, Union
+from typing import Any, TextIO
 
 from torch_audit import __version__
 
@@ -9,7 +9,7 @@ from .base import Reporter
 
 
 class JSONReporter(Reporter):
-    def __init__(self, dest: Optional[Union[str, TextIO]] = None):
+    def __init__(self, dest: str | TextIO | None = None):
         """
         Args:
             dest: File path (str) or open stream (TextIO) to write JSON to.

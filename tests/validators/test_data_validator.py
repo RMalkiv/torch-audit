@@ -8,12 +8,7 @@ from torch_audit.validators.builtin.data import DataValidator
 
 
 def create_ctx(model, batch):
-    state = AuditState(
-        model=model,
-        step=0,
-        phase=Phase.FORWARD,
-        batch=batch
-    )
+    state = AuditState(model=model, step=0, phase=Phase.FORWARD, batch=batch)
     return AuditContext(state)
 
 

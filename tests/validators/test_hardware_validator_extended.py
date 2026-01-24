@@ -20,7 +20,11 @@ def test_ta200_int8_alignment():
 
     findings = list(validator.check(context))
 
-    int8_findings = [f for f in findings if f.rule_id == TA200_TENSOR_CORE.id and f.severity == Severity.INFO]
+    int8_findings = [
+        f
+        for f in findings
+        if f.rule_id == TA200_TENSOR_CORE.id and f.severity == Severity.INFO
+    ]
     assert len(int8_findings) == 1
     assert "INT8 misaligned" in int8_findings[0].message
 

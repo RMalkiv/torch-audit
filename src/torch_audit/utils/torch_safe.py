@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any
 
 import torch
 
@@ -22,7 +22,7 @@ def isfinite_all(t: torch.Tensor) -> bool:
     return torch.isfinite(t).all().item()
 
 
-def tensor_summary(t: torch.Tensor) -> Dict[str, Any]:
+def tensor_summary(t: torch.Tensor) -> dict[str, Any]:
     t = safe_detach(t)
     return {
         "shape": list(t.shape),
@@ -32,7 +32,7 @@ def tensor_summary(t: torch.Tensor) -> Dict[str, Any]:
     }
 
 
-def safe_norm(t: torch.Tensor) -> Optional[float]:
+def safe_norm(t: torch.Tensor) -> float | None:
     try:
         t = safe_detach(t)
         if t.is_sparse:

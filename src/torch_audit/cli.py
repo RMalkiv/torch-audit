@@ -1,21 +1,35 @@
 import importlib
-import sys
 import traceback
 
 import click
 import torch
 
+from .__about__ import __version__
 from .api import audit
-from .core import Phase
+from .core import Phase, Rule
+from .registry import RuleRegistry
 from .reporters.console import ConsoleReporter
 from .reporters.json import JSONReporter
 from .reporters.sarif import SARIFReporter
 
 
 def load_model_from_string(import_str: str) -> torch.nn.Module:
+    """Load a ``torch.nn.Module`` from an import string.
+
+    The import string format is:
+
+        ``module.path:ObjName``
+
+    Where ``ObjName`` can be either:
+      - a ``nn.Module`` instance
+      - a ``nn.Module`` class (zero-arg constructor)
+
+    Examples:
+      - ``torchvision.models:resnet18``
+      - ``my_project.models:MyModel``
+      - ``my_project.models:MODEL``  # pre-instantiated
     """
-    Dynamically imports a model from a string like 'my_project.models:ResNet'.
-    """
+
     try:
         module_path, obj_name = import_str.split(":")
     except ValueError:
@@ -45,21 +59,82 @@ def load_model_from_string(import_str: str) -> torch.nn.Module:
     raise click.BadParameter(f"Object '{obj_name}' is not a torch.nn.Module")
 
 
-# Helper to parse rule lists
-def parse_rule_list(ctx, param, value):
+def _parse_rule_list(
+    _ctx: click.Context, _param: click.Parameter, value: tuple[str, ...]
+) -> set[str]:
+    """Parse repeated --select/--ignore values.
+
+    Supports:
+      - ``--select TA100 --select TA200``
+      - ``--select TA100,TA200``
+    """
     if not value:
         return set()
-    rules = set()
+
+    rules: set[str] = set()
     for item in value:
-        rules.update(item.split(","))
+        for token in item.split(","):
+            t = token.strip()
+            if t:
+                rules.add(t)
     return rules
 
 
-@click.command()
-@click.argument("target", required=True)
+def _ensure_rules_loaded() -> list[Rule]:
+    """Ensure all built-in rule modules are imported and registered."""
+    # Importing validators registers rules in the global registry.
+    from .loader import load_runtime_validators
+
+    load_runtime_validators()
+    return RuleRegistry.all_rules()
+
+
+def _print_rules_table(rules: list[Rule]) -> None:
+    from rich.console import Console
+    from rich.table import Table
+
+    table = Table(title="torch-audit rules", show_lines=False)
+    table.add_column("ID", style="bold")
+    table.add_column("Severity")
+    table.add_column("Category")
+    table.add_column("Title")
+
+    for r in rules:
+        table.add_row(r.id, r.default_severity.value, r.category, r.title)
+
+    Console().print(table)
+
+
+def _print_rule_detail(rule: Rule) -> None:
+    from rich.console import Console
+    from rich.panel import Panel
+
+    body = (
+        f"[bold]{rule.id}[/bold]  ({rule.category})\n"
+        f"Default severity: [bold]{rule.default_severity.value}[/bold]\n\n"
+        f"[bold]Description[/bold]\n{rule.description}\n\n"
+        f"[bold]Remediation[/bold]\n{rule.remediation}"
+    )
+
+    Console().print(Panel.fit(body, title="Rule", border_style="cyan"))
+
+
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
+@click.version_option(__version__, prog_name="torch-audit")
+@click.argument("target", required=False)
+@click.option(
+    "--list-rules",
+    is_flag=True,
+    help="List all available rule IDs and exit.",
+)
+@click.option(
+    "--explain",
+    metavar="RULE_ID",
+    help="Show details for a single rule ID and exit.",
+)
 @click.option(
     "--format",
-    "-f",
+    "formats",
     type=click.Choice(["rich", "json", "sarif"], case_sensitive=False),
     multiple=True,
     default=["rich"],
@@ -67,7 +142,7 @@ def parse_rule_list(ctx, param, value):
 )
 @click.option(
     "--output",
-    "-o",
+    "output_path",
     type=click.Path(writable=True),
     help="Output file for machine-readable formats (JSON/SARIF).",
 )
@@ -79,8 +154,8 @@ def parse_rule_list(ctx, param, value):
 )
 @click.option(
     "--phase",
-    type=click.Choice([p.value for p in Phase], case_sensitive=False),
-    default="static",
+    type=click.Choice([Phase.STATIC.value, Phase.INIT.value], case_sensitive=False),
+    default=Phase.STATIC.value,
     help="Context phase for the audit (e.g. static, init).",
 )
 @click.option("--step", type=int, default=0, help="The training step to simulate.")
@@ -98,17 +173,19 @@ def parse_rule_list(ctx, param, value):
 @click.option(
     "--select",
     multiple=True,
-    callback=parse_rule_list,
+    callback=_parse_rule_list,
     help="Only run specific rules (by ID). Can be comma-separated.",
 )
 @click.option(
     "--ignore",
     multiple=True,
-    callback=parse_rule_list,
+    callback=_parse_rule_list,
     help="Ignore specific rules (by ID). Can be comma-separated.",
 )
 @click.option(
-    "--show-suppressed", is_flag=True, help="Include suppressed findings in the output."
+    "--show-suppressed",
+    is_flag=True,
+    help="Include suppressed findings in the output.",
 )
 @click.option(
     "--ignore-internal-errors",
@@ -116,32 +193,61 @@ def parse_rule_list(ctx, param, value):
     help="Suppress internal validator crashes (TA000).",
 )
 def main(
-    target: str,
-    format,
-    output,
+    target: str | None,
+    list_rules: bool,
+    explain: str | None,
+    formats: tuple[str, ...],
+    output_path: str | None,
     fail_level: str,
     phase: str,
     step: int,
-    baseline: str,
+    baseline: str | None,
     update_baseline: bool,
-    select,
-    ignore,
-    show_suppressed,
-    ignore_internal_errors,
-):
+    select: set[str],
+    ignore: set[str],
+    show_suppressed: bool,
+    ignore_internal_errors: bool,
+) -> None:
+    """Audit a PyTorch model for silent training bugs.
+
+    TARGET is an import string, for example:
+
+      - ``torchvision.models:resnet18``
+      - ``my_project.models:MyModel``
+
+    Tip: if the ``torch-audit`` console script isn't available, run:
+
+      ``python -m torch_audit ...``
     """
-    Audit a PyTorch model for stability and performance issues.
-    TARGET should be an import string (e.g., 'torchvision.models:resnet18').
-    """
-    # 1. Load User Model
+
+    # --- Rules-only modes ---
+    if list_rules:
+        rules = _ensure_rules_loaded()
+        _print_rules_table(rules)
+        raise SystemExit(0)
+
+    if explain:
+        _ensure_rules_loaded()
+        rule = RuleRegistry.get(explain.strip())
+        if rule is None:
+            click.echo(f"Unknown rule id: {explain}", err=True)
+            raise SystemExit(2)
+        _print_rule_detail(rule)
+        raise SystemExit(0)
+
+    if not target:
+        click.echo(click.get_current_context().get_help())
+        raise SystemExit(2)
+
+    # 1) Load user model
     click.secho(f"🔎 Loading target: {target}...", dim=True)
     try:
         model = load_model_from_string(target)
     except Exception as e:
         click.secho(f"FATAL: {e}", fg="red")
-        sys.exit(1)
+        raise SystemExit(1) from e
 
-    # 2. Run Audit (via Library API)
+    # 2) Run audit (library API)
     try:
         result = audit(
             model=model,
@@ -151,7 +257,6 @@ def main(
             show_report=False,
             baseline_file=baseline,
             update_baseline=update_baseline,
-            # CLI filters & behavior toggles
             select_rules=select or None,
             ignore_rules=ignore or None,
             show_suppressed=bool(show_suppressed),
@@ -161,30 +266,30 @@ def main(
     except Exception as e:
         click.secho(f"Error running audit: {e}", err=True)
         traceback.print_exc()
-        sys.exit(1)
+        raise SystemExit(1) from None
 
-    # 3. Report Results
-    formats = set(f.lower() for f in format)
+    # 3) Report results
+    requested_formats = {f.lower() for f in formats}
 
     file_formats = {"json", "sarif"}
-    requested_file_formats = formats.intersection(file_formats)
-    if output and len(requested_file_formats) > 1:
+    requested_file_formats = requested_formats.intersection(file_formats)
+    if output_path and len(requested_file_formats) > 1:
         click.echo(
             "Error: --output cannot be used with multiple file formats (JSON + SARIF).",
             err=True,
         )
-        sys.exit(1)
+        raise SystemExit(2)
 
-    if "rich" in formats:
+    if "rich" in requested_formats:
         ConsoleReporter().report(result)
 
-    if "json" in formats:
-        JSONReporter(dest=output).report(result)
+    if "json" in requested_formats:
+        JSONReporter(dest=output_path).report(result)
 
-    if "sarif" in formats:
-        SARIFReporter(dest=output).report(result)
+    if "sarif" in requested_formats:
+        SARIFReporter(dest=output_path).report(result)
 
-    sys.exit(result.exit_code)
+    raise SystemExit(result.exit_code)
 
 
 if __name__ == "__main__":

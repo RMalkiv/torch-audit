@@ -1,72 +1,103 @@
+"""Torch-Audit demo: Hugging Face Transformers (no downloads required).
+
+Run:
+  python examples/demo_hf.py
+
+Notes:
+  - This demo only requires `transformers` if you want to run the HF section.
+    If `transformers` is not installed, the script prints an instruction and exits.
+  - We intentionally instantiate a tiny model from a config (no `from_pretrained`).
+    That keeps it fast and avoids network access.
+
+What it shows:
+  - Auditing a Transformers model in a normal PyTorch training loop
+  - Data checks on typical HF batches (input_ids / attention_mask / labels)
+"""
+
+import sys
+from pathlib import Path
+
+# Allow running this demo without installing the package.
+_ROOT = Path(__file__).resolve().parents[1]
+_SRC = _ROOT / "src"
+if _SRC.exists():
+    sys.path.insert(0, str(_SRC))
+
 import torch
-from transformers import (
-    AutoModelForSequenceClassification,
-    AutoTokenizer,
-    Trainer,
-    TrainingArguments
-)
-from datasets import Dataset
+import torch.optim as optim
 
-from torch_audit import Auditor, AuditConfig
-from torch_audit.callbacks import HFAuditCallback
+from torch_audit import Auditor
+from torch_audit.reporters.console import ConsoleReporter
 
 
-def run_demo():
-    print("\n" + "=" * 60)
-    print("🤗 TORCH-AUDIT: HUGGING FACE TRAINER DEMO")
-    print("=" * 60)
+def run_demo() -> None:
+    try:
+        from transformers import BertConfig, BertForSequenceClassification
+    except Exception:
+        print("\n" + "=" * 72)
+        print("🤗 TORCH-AUDIT: HUGGING FACE DEMO (current API)")
+        print("=" * 72)
+        print(
+            "\nThis demo requires the optional dependency `transformers`.\n"
+            "Install it and re-run:\n"
+            "  pip install transformers\n"
+        )
+        return
 
-    model_name = "distilbert-base-uncased"
+    print("\n" + "=" * 72)
+    print("🤗 TORCH-AUDIT: HUGGING FACE DEMO (current API)")
+    print("=" * 72)
 
-    # 1. Setup Model & Tokenizer
-    print(f"Loading {model_name}...")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=2)
+    torch.manual_seed(0)
 
-    # 2. Create Dummy Dataset
-    # We create a dataset where some inputs are dangerously long or malformed
-    data = [
-        {"text": "This is a normal sentence.", "label": 0},
-        {"text": "Another normal sentence for training.", "label": 1},
-        {"text": "", "label": 0},
-        # Issue: Very long nonsense to trigger compute waste
-        {"text": "waste " * 500, "label": 1},
-    ]
-
-    def tokenize_function(examples):
-        return tokenizer(examples["text"], padding="max_length", truncation=True, max_length=128)
-
-    dataset = Dataset.from_list(data)
-    tokenized_datasets = dataset.map(tokenize_function, batched=True)
-
-    # 3. Setup Auditor
-    config = AuditConfig(
-        monitor_nlp=True,
-        pad_token_id=tokenizer.pad_token_id,
-        vocab_size=tokenizer.vocab_size
+    # Tiny BERT config (fast, no downloads).
+    config = BertConfig(
+        vocab_size=128,
+        hidden_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        intermediate_size=128,
+        max_position_embeddings=64,
+        num_labels=2,
     )
-    auditor = Auditor(model, config=config)
+    model = BertForSequenceClassification(config)
 
-    # 4. Define Trainer with Callback
-    training_args = TrainingArguments(
-        output_dir="./results",
-        num_train_epochs=1,
-        per_device_train_batch_size=2,
-        logging_steps=1,
-        report_to="none",
-        use_cpu=not torch.cuda.is_available()
+    optimizer = optim.Adam(model.parameters(), lr=3e-4, weight_decay=1e-2)
+    auditor = Auditor(
+        model, optimizer=optimizer, every_n_steps=1, reporters=[ConsoleReporter()]
     )
 
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=tokenized_datasets,
-        # The Magic Line:
-        callbacks=[HFAuditCallback(auditor)]
-    )
+    # Create a batch. We'll include one intentionally bad input_ids tensor to show
+    # TA305 (negative integer inputs) is caught before embedding lookup.
+    bad_batch = {
+        "input_ids": torch.tensor([[5, 10, -1, 7, 0, 0, 0, 0]], dtype=torch.long),
+        "attention_mask": torch.tensor([[1, 1, 1, 1, 0, 0, 0, 0]], dtype=torch.long),
+        "labels": torch.tensor([1], dtype=torch.long),
+    }
 
-    print("\n[Starting Fine-Tuning]...")
-    trainer.train()
+    print("\n[1] Data-only audit on an invalid batch (no forward pass)")
+    with auditor:
+        auditor.audit_data(bad_batch)
+
+    # Now a valid batch for a tiny training step.
+    batch = {
+        "input_ids": torch.randint(0, config.vocab_size, (4, 16), dtype=torch.long),
+        "attention_mask": torch.ones((4, 16), dtype=torch.long),
+        "labels": torch.randint(0, 2, (4,), dtype=torch.long),
+    }
+
+    print("\n[2] Tiny training step with Auditor wrappers")
+    with auditor:
+        auditor.audit_static()
+        auditor.audit_init()
+
+        optimizer.zero_grad(set_to_none=True)
+        out = auditor.forward(**batch)
+        loss = out.loss
+        auditor.backward(loss)
+        auditor.optimizer_step()
+
+    auditor.finish(report=True)
 
 
 if __name__ == "__main__":

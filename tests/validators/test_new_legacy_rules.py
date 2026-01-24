@@ -18,7 +18,9 @@ def test_ta303_suspicious_layout():
 
     validator = DataValidator()
     # FIX: Use AuditState
-    state = AuditState(model=nn.Linear(1, 1), batch={"img": t}, phase=Phase.FORWARD, step=0)
+    state = AuditState(
+        model=nn.Linear(1, 1), batch={"img": t}, phase=Phase.FORWARD, step=0
+    )
     context = AuditContext(state)
 
     findings = list(validator.check(context))

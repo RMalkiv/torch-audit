@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Any, Generator, Optional, Sequence, Set
+from collections.abc import Generator, Sequence
+from typing import Any
 
 from .context import AuditContext
 from .core import Finding, Phase, Rule
@@ -24,12 +25,12 @@ class BaseValidator(ABC):
         return [self.rule]
 
     @property
-    def emits_rule_ids(self) -> Set[str]:
+    def emits_rule_ids(self) -> set[str]:
         """Returns the set of Rule IDs this validator is allowed to emit."""
         return {r.id for r in self.rules}
 
     @property
-    def supported_phases(self) -> Optional[Set[Phase]]:
+    def supported_phases(self) -> set[Phase] | None:
         """
         Returns the set of phases this validator supports.
         If None, the validator is run in all phases.

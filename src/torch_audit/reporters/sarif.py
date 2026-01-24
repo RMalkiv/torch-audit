@@ -1,6 +1,6 @@
 import hashlib
 import json
-from typing import Optional, TextIO, Union
+from typing import TextIO
 
 from torch_audit import __version__
 
@@ -11,7 +11,7 @@ from .base import Reporter
 class SARIFReporter(Reporter):
     def __init__(
         self,
-        dest: Optional[Union[str, TextIO]] = None,
+        dest: str | TextIO | None = None,
         location_file: str = "model.py",
         location_line: int = 1,
     ):
@@ -26,8 +26,14 @@ class SARIFReporter(Reporter):
         self.location_line = location_line
 
     def report(self, result: AuditResult) -> None:
-        # 1. Build Rule Metadata & Index Map
-        active_rule_ids = sorted({f.rule_id for f in result.findings})
+        # 1. Deterministic Sort (keeps SARIF diffs stable in CI)
+        sorted_findings = sorted(
+            result.findings,
+            key=lambda f: (f.rule_id, f.module_path or "", f.entity or "", f.message),
+        )
+
+        # 2. Build Rule Metadata & Index Map
+        active_rule_ids = sorted({f.rule_id for f in sorted_findings})
         rules_meta = []
         rule_indices = {}
 
@@ -62,7 +68,7 @@ class SARIFReporter(Reporter):
 
         # 2. Map Findings
         results = []
-        for f in result.findings:
+        for f in sorted_findings:
             level = "warning"
             if f.severity in [Severity.ERROR, Severity.FATAL]:
                 level = "error"

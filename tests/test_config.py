@@ -40,9 +40,7 @@ def test_suppression_init_regex():
 
     # Invalid regex -> Should crash loudly
     with pytest.raises(ValueError, match="Invalid suppression regex"):
-        Suppression(
-            rule_id="TA001", reason="ignore", module_regex="[unclosed-bracket"
-        )
+        Suppression(rule_id="TA001", reason="ignore", module_regex="[unclosed-bracket")
 
 
 # --- 3. Test Suppression Matching Logic ---

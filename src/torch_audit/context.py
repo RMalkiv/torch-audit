@@ -1,5 +1,6 @@
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, Optional, Tuple
+from typing import Any
 
 import torch
 
@@ -11,14 +12,14 @@ class AuditState:
     model: torch.nn.Module
     step: int
     phase: Phase
-    batch: Optional[Any] = None
-    optimizer: Optional[torch.optim.Optimizer] = None
+    batch: Any | None = None
+    optimizer: torch.optim.Optimizer | None = None
 
 
 class AuditContext:
     def __init__(self, state: AuditState):
         self._state = state
-        self._cache: Dict[str, Any] = {}
+        self._cache: dict[str, Any] = {}
 
     @property
     def model(self) -> torch.nn.Module:
@@ -38,7 +39,7 @@ class AuditContext:
         return self._state.phase
 
     @property
-    def batch(self) -> Optional[Any]:
+    def batch(self) -> Any | None:
         """
         Optional input batch for runtime/data validators.
         Validators must treat this as read-only and must not store it.
@@ -46,10 +47,10 @@ class AuditContext:
         return self._state.batch
 
     @property
-    def optimizer(self) -> Optional[torch.optim.Optimizer]:
+    def optimizer(self) -> torch.optim.Optimizer | None:
         return self._state.optimizer
 
-    def iter_param_info(self) -> Iterator[Dict[str, Any]]:
+    def iter_param_info(self) -> Iterator[dict[str, Any]]:
         """
         Safe accessor for parameter metadata.
         Prevents accidental mutation of weights/grads and ensures JSON-safe types.
@@ -64,7 +65,7 @@ class AuditContext:
                 "has_grad": param.grad is not None,
             }
 
-    def iter_batch_tensors(self) -> Iterator[Tuple[str, torch.Tensor]]:
+    def iter_batch_tensors(self) -> Iterator[tuple[str, torch.Tensor]]:
         """
         Yield (path, tensor) pairs found inside the batch.
         """
@@ -74,7 +75,7 @@ class AuditContext:
         yield from _walk_batch(b, "batch")
 
 
-def _walk_batch(obj: Any, path: str) -> Iterator[Tuple[str, torch.Tensor]]:
+def _walk_batch(obj: Any, path: str) -> Iterator[tuple[str, torch.Tensor]]:
     if isinstance(obj, torch.Tensor):
         yield path, obj
     elif isinstance(obj, (list, tuple)):

@@ -1,16 +1,7 @@
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import (
     Any,
-    Callable,
-    Dict,
-    Generator,
-    Iterable,
-    List,
-    Optional,
-    Sequence,
-    Set,
-    Tuple,
-    Union,
 )
 
 import torch
@@ -24,7 +15,7 @@ from .runner import AuditRunner
 from .validator import BaseValidator
 
 
-def _normalize_severity(value: Union[str, Severity], *, strict: bool) -> Severity:
+def _normalize_severity(value: str | Severity, *, strict: bool) -> Severity:
     if isinstance(value, Severity):
         return value
     try:
@@ -37,7 +28,7 @@ def _normalize_severity(value: Union[str, Severity], *, strict: bool) -> Severit
         return Severity.ERROR
 
 
-def _normalize_phase(value: Union[str, Phase], *, strict: bool) -> Phase:
+def _normalize_phase(value: str | Phase, *, strict: bool) -> Phase:
     if isinstance(value, Phase):
         return value
     try:
@@ -50,7 +41,7 @@ def _normalize_phase(value: Union[str, Phase], *, strict: bool) -> Phase:
         return Phase.STATIC
 
 
-def _pack_batch(args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
+def _pack_batch(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
     """Best-effort packing of model inputs into a batch object.
 
     We keep this intentionally simple so :meth:`AuditContext.iter_batch_tensors`
@@ -89,17 +80,17 @@ class Auditor:
         self,
         model: torch.nn.Module,
         *,
-        optimizer: Optional[torch.optim.Optimizer] = None,
+        optimizer: torch.optim.Optimizer | None = None,
         start_step: int = 0,
-        every_n_steps: int = 1,
-        validators: Optional[List[BaseValidator]] = None,
-        reporters: Optional[List[Reporter]] = None,
-        fail_level: Union[str, Severity] = Severity.ERROR,
+        every_n_steps: int = 1000,
+        validators: list[BaseValidator] | None = None,
+        reporters: list[Reporter] | None = None,
+        fail_level: str | Severity = Severity.ERROR,
         strict: bool = False,
-        baseline_file: Optional[str] = None,
+        baseline_file: str | None = None,
         update_baseline: bool = False,
-        select_rules: Optional[Set[str]] = None,
-        ignore_rules: Optional[Set[str]] = None,
+        select_rules: set[str] | None = None,
+        ignore_rules: set[str] | None = None,
         show_suppressed: bool = False,
         suppress_internal_errors: bool = False,
         auto_finish: bool = False,
@@ -123,23 +114,33 @@ class Auditor:
             suppress_internal_errors=suppress_internal_errors,
         )
 
-        self.validators: List[BaseValidator] = (
+        self.validators: list[BaseValidator] = (
             list(validators) if validators is not None else load_runtime_validators()
         )
 
         self.runner = AuditRunner(self.config, self.validators)
-        self.reporters: List[Reporter] = list(reporters) if reporters else []
+        self.reporters: list[Reporter] = list(reporters) if reporters else []
 
         self._attached: bool = False
         self._attach_depth: int = 0
         self._finished: bool = False
-        self._final_result: Optional[AuditResult] = None
+        self._final_result: AuditResult | None = None
 
         self._last_batch: Any = None
         self._data_audited_this_step: bool = False
 
         # Used for "delta" retrieval.
         self._findings_cursor: int = 0
+
+        # --- Autopatch ("zero-touch") mode ---
+        # When enabled, we monkey-patch `model.forward` and (optionally) `optimizer.step`
+        # so users can run a normal training loop without wrappers or decorators.
+        self._autopatch_enabled: bool = False
+        self._autopatch_depth: int = 0
+        self._autopatch_suspended: int = 0
+        self._orig_model_forward: Callable[..., Any] | None = None
+        self._orig_optimizer_step: Callable[..., Any] | None = None
+        self._patched_optimizer: torch.optim.Optimizer | None = None
 
     # --- Context manager ---
 
@@ -161,11 +162,28 @@ class Auditor:
     # --- Lifecycle ---
 
     def attach(self) -> None:
-        """Attach hook-based validators to the model."""
+        """Attach hook-based validators to the model.
+
+        This is best-effort: validator attach failures are converted into TA000
+        internal-error findings (unless suppress_internal_errors=True) so auditing
+        cannot crash training.
+        """
         if self._attached:
             return
+
+        # Use a synthetic context for error reporting.
+        ctx = self._make_context(Phase.INIT, step=None, batch=self._last_batch)
+
         for v in self.validators:
-            v.attach(self.model)
+            try:
+                v.attach(self.model)
+            except Exception as e:
+                # Keep attach best-effort: we don't want instrumentation failures to crash training.
+                try:
+                    self.runner._handle_crash(v, e, ctx)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
         self._attached = True
 
     def detach(self) -> None:
@@ -196,6 +214,19 @@ class Auditor:
         self._findings_cursor = len(self.runner.findings)
         return new
 
+    @contextmanager
+    def _suspend_autopatch(self) -> Generator[None, None, None]:
+        """Temporarily disable autopatch wrappers (internal use).
+
+        This avoids double-auditing if a user mixes `auditor.forward()` /
+        `auditor.optimizer_step()` with autopatch mode.
+        """
+        self._autopatch_suspended += 1
+        try:
+            yield
+        finally:
+            self._autopatch_suspended = max(0, self._autopatch_suspended - 1)
+
     # --- Core execution helpers ---
 
     def _should_audit(self, step: int, phase: Phase) -> bool:
@@ -205,7 +236,7 @@ class Auditor:
         return (step % self.every_n_steps) == 0
 
     def _make_context(
-        self, phase: Phase, *, step: Optional[int], batch: Any
+        self, phase: Phase, *, step: int | None, batch: Any
     ) -> AuditContext:
         st = AuditState(
             model=self.model,
@@ -218,27 +249,41 @@ class Auditor:
 
     def _call_phase_start(self, ctx: AuditContext) -> None:
         for v in self.validators:
-            v.on_phase_start(ctx)
+            try:
+                v.on_phase_start(ctx)
+            except Exception as e:
+                # Best-effort: phase hooks should never crash the training loop.
+                try:
+                    self.runner._handle_crash(v, e, ctx)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
 
     def _call_phase_end(self, ctx: AuditContext) -> None:
         for v in self.validators:
-            v.on_phase_end(ctx)
+            try:
+                v.on_phase_end(ctx)
+            except Exception as e:
+                # Best-effort: phase hooks should never crash the training loop.
+                try:
+                    self.runner._handle_crash(v, e, ctx)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
 
     # --- High-level phase APIs ---
 
-    def audit_static(self, *, step: Optional[int] = None) -> None:
+    def audit_static(self, *, step: int | None = None) -> None:
         """Run static validators (architecture/hardware/etc)."""
         ctx = self._make_context(Phase.STATIC, step=step, batch=None)
         if self._should_audit(ctx.step, ctx.phase):
             self.runner.run_step(ctx)
 
-    def audit_init(self, *, step: Optional[int] = None) -> None:
-        """Run init validators (optimizer config, hardware, etc)."""
+    def audit_init(self, *, step: int | None = None) -> None:
+        """Run init validators (optimizer configuration, etc)."""
         ctx = self._make_context(Phase.INIT, step=step, batch=None)
         if self._should_audit(ctx.step, ctx.phase):
             self.runner.run_step(ctx)
 
-    def audit_data(self, batch: Any, *, step: Optional[int] = None) -> None:
+    def audit_data(self, batch: Any, *, step: int | None = None) -> None:
         """Run data-only checks on a batch.
 
         This intentionally runs only data validators to avoid false positives from
@@ -292,7 +337,8 @@ class Auditor:
             self.audit_data(batch)
 
         # Forward pass
-        out = self.model(*args, **kwargs)
+        with self._suspend_autopatch():
+            out = self.model(*args, **kwargs)
 
         # Post-forward audit (exclude data validators to avoid duplicate findings).
         post_ctx = self._make_context(Phase.FORWARD, step=None, batch=batch)
@@ -331,7 +377,7 @@ class Auditor:
 
     def optimizer_step(
         self,
-        optimizer: Optional[torch.optim.Optimizer] = None,
+        optimizer: torch.optim.Optimizer | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -351,7 +397,8 @@ class Auditor:
         ctx = self._make_context(Phase.OPTIMIZER, step=None, batch=self._last_batch)
         self._call_phase_start(ctx)
 
-        self.optimizer.step(*args, **kwargs)
+        with self._suspend_autopatch():
+            self.optimizer.step(*args, **kwargs)
 
         if self._should_audit(ctx.step, ctx.phase):
             self.runner.run_step(ctx)
@@ -361,6 +408,214 @@ class Auditor:
         # Next training step.
         self.step += 1
         self._data_audited_this_step = False
+
+    # --- Zero-touch integration (monkey patching) ---
+
+    def autopatch(
+        self,
+        *,
+        run_static: bool = True,
+        run_init: bool = True,
+        patch_model: bool = True,
+        patch_optimizer: bool = True,
+    ) -> "Auditor":
+        """Enable "zero-touch" runtime auditing.
+
+        This installs lightweight monkey patches so a standard training loop like:
+
+            out = model(batch)
+            loss.backward()
+            optimizer.step()
+
+        automatically produces torch-audit findings without wrappers or decorators.
+
+        Under the hood:
+          - patches `model.forward` to run FORWARD audits
+          - patches `optimizer.step` to run OPTIMIZER audits (and advance the auditor step)
+
+        Call :meth:`unpatch` to restore the original methods.
+
+        Notes:
+          - This modifies objects in-place. Prefer the explicit wrappers
+            (`auditor.forward()`, `auditor.backward()`, `auditor.optimizer_step()`)
+            if you need maximum transparency or are using compilation/tracing tools.
+        """
+        self._autopatch_depth += 1
+        if self._autopatch_enabled:
+            return self
+
+        # Ensure hooks are attached for hook-based validators.
+        if not self._attached:
+            self.attach()
+
+        # Optional one-shot checks.
+        if run_static:
+            self.audit_static()
+        if run_init:
+            self.audit_init()
+
+        if patch_model:
+            self._patch_model_forward()
+
+        if patch_optimizer and self.optimizer is not None:
+            self._patch_optimizer_step(self.optimizer)
+
+        self._autopatch_enabled = True
+        return self
+
+    def unpatch(self, *, detach: bool = True) -> None:
+        """Disable autopatch mode and restore original methods.
+
+        Args:
+            detach: If True, also detach hook-based validators from the model.
+        """
+        if self._autopatch_depth > 0:
+            self._autopatch_depth -= 1
+
+        if self._autopatch_depth > 0:
+            return
+
+        # Restore model.forward
+        if self._orig_model_forward is not None:
+            try:
+                self.model.forward = self._orig_model_forward  # type: ignore[assignment]
+            except Exception:
+                pass
+            self._orig_model_forward = None
+
+        # Restore optimizer.step
+        if (
+            self._patched_optimizer is not None
+            and self._orig_optimizer_step is not None
+        ):
+            try:
+                self._patched_optimizer.step = self._orig_optimizer_step  # type: ignore[assignment]
+            except Exception:
+                pass
+
+        self._patched_optimizer = None
+        self._orig_optimizer_step = None
+        self._autopatch_enabled = False
+
+        if detach and self._attached:
+            self.detach()
+
+    def _patch_model_forward(self) -> None:
+        if self._orig_model_forward is not None:
+            return
+
+        orig_forward = self.model.forward
+        self._orig_model_forward = orig_forward
+
+        from functools import wraps
+
+        @wraps(orig_forward)
+        def patched_forward(*args: Any, **kwargs: Any) -> Any:
+            # Allow internal callers (e.g. Auditor.forward wrapper) to bypass autopatch.
+            if self._autopatch_suspended > 0:
+                return orig_forward(*args, **kwargs)
+
+            if not self._attached:
+                self.attach()
+
+            batch = _pack_batch(args, kwargs)
+            self._last_batch = batch
+            self._data_audited_this_step = False
+
+            pre_ctx = self._make_context(Phase.FORWARD, step=None, batch=batch)
+            self._call_phase_start(pre_ctx)
+
+            try:
+                # Optionally run data checks pre-forward.
+                if self._should_audit(pre_ctx.step, pre_ctx.phase):
+                    self.audit_data(batch)
+
+                out = orig_forward(*args, **kwargs)
+
+                post_ctx = self._make_context(Phase.FORWARD, step=None, batch=batch)
+                if self._should_audit(post_ctx.step, post_ctx.phase):
+                    # Exclude DataValidator because audit_data already ran.
+                    try:
+                        from .validators.builtin.data import DataValidator
+
+                        post_validators = [
+                            v
+                            for v in self.validators
+                            if not isinstance(v, DataValidator)
+                        ]
+                    except Exception:
+                        post_validators = self.validators
+
+                    self.runner.run_step(post_ctx, validators=post_validators)
+
+                return out
+            finally:
+                # Best-effort phase end (even if forward crashes).
+                try:
+                    end_ctx = self._make_context(Phase.FORWARD, step=None, batch=batch)
+                    self._call_phase_end(end_ctx)
+                except Exception:
+                    pass
+
+        # Monkey patch in-place.
+        self.model.forward = patched_forward  # type: ignore[assignment]
+
+    def _patch_optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
+        # If we already patched a different optimizer, restore it first.
+        if (
+            self._patched_optimizer is not None
+            and self._patched_optimizer is not optimizer
+            and self._orig_optimizer_step is not None
+        ):
+            try:
+                self._patched_optimizer.step = self._orig_optimizer_step  # type: ignore[assignment]
+            except Exception:
+                pass
+            self._patched_optimizer = None
+            self._orig_optimizer_step = None
+
+        if (
+            self._patched_optimizer is optimizer
+            and self._orig_optimizer_step is not None
+        ):
+            return
+
+        self._patched_optimizer = optimizer
+        orig_step = optimizer.step
+        self._orig_optimizer_step = orig_step
+
+        from functools import wraps
+
+        @wraps(orig_step)
+        def patched_step(*args: Any, **kwargs: Any) -> Any:
+            if self._autopatch_suspended > 0:
+                return orig_step(*args, **kwargs)
+
+            # Keep the auditor aligned with the optimizer used by the loop.
+            self.optimizer = optimizer
+
+            if not self._attached:
+                self.attach()
+
+            ctx = self._make_context(Phase.OPTIMIZER, step=None, batch=self._last_batch)
+            self._call_phase_start(ctx)
+
+            try:
+                # Run the real optimizer step first (preserve semantics).
+                out = orig_step(*args, **kwargs)
+
+                if self._should_audit(ctx.step, ctx.phase):
+                    self.runner.run_step(ctx)
+
+                return out
+            finally:
+                self._call_phase_end(ctx)
+
+                # Advance the training step counter (optimizer-step defined).
+                self.step += 1
+                self._data_audited_this_step = False
+
+        optimizer.step = patched_step  # type: ignore[assignment]
 
     # --- Finalization ---
 
@@ -386,17 +641,17 @@ class Auditor:
 def audit_dynamic(
     model: torch.nn.Module,
     *,
-    optimizer: Optional[torch.optim.Optimizer] = None,
+    optimizer: torch.optim.Optimizer | None = None,
     start_step: int = 0,
-    every_n_steps: int = 1,
-    validators: Optional[List[BaseValidator]] = None,
-    reporters: Optional[List[Reporter]] = None,
-    fail_level: Union[str, Severity] = Severity.ERROR,
+    every_n_steps: int = 1000,
+    validators: list[BaseValidator] | None = None,
+    reporters: list[Reporter] | None = None,
+    fail_level: str | Severity = Severity.ERROR,
     strict: bool = False,
-    baseline_file: Optional[str] = None,
+    baseline_file: str | None = None,
     update_baseline: bool = False,
-    select_rules: Optional[Set[str]] = None,
-    ignore_rules: Optional[Set[str]] = None,
+    select_rules: set[str] | None = None,
+    ignore_rules: set[str] | None = None,
     show_suppressed: bool = False,
     suppress_internal_errors: bool = False,
     run_static: bool = True,
@@ -433,11 +688,66 @@ def audit_dynamic(
         yield auditor
 
 
+def autopatch(
+    model: torch.nn.Module,
+    *,
+    optimizer: torch.optim.Optimizer | None = None,
+    start_step: int = 0,
+    every_n_steps: int = 1000,
+    validators: list[BaseValidator] | None = None,
+    reporters: list[Reporter] | None = None,
+    fail_level: str | Severity = Severity.ERROR,
+    strict: bool = False,
+    baseline_file: str | None = None,
+    update_baseline: bool = False,
+    select_rules: set[str] | None = None,
+    ignore_rules: set[str] | None = None,
+    show_suppressed: bool = False,
+    suppress_internal_errors: bool = False,
+    run_static: bool = True,
+    run_init: bool = True,
+    patch_model: bool = True,
+    patch_optimizer: bool = True,
+) -> Auditor:
+    """Create an :class:`~torch_audit.runtime.Auditor` and enable autopatch mode.
+
+    This is the simplest integration style: it modifies `model.forward` (and optionally
+    `optimizer.step`) in-place so you can keep a standard training loop.
+
+    Call :meth:`Auditor.unpatch` to restore the original methods.
+    """
+    auditor = Auditor(
+        model,
+        optimizer=optimizer,
+        start_step=start_step,
+        every_n_steps=every_n_steps,
+        validators=validators,
+        reporters=reporters,
+        fail_level=fail_level,
+        strict=strict,
+        baseline_file=baseline_file,
+        update_baseline=update_baseline,
+        select_rules=select_rules,
+        ignore_rules=ignore_rules,
+        show_suppressed=show_suppressed,
+        suppress_internal_errors=suppress_internal_errors,
+        auto_finish=False,
+    )
+
+    auditor.autopatch(
+        run_static=run_static,
+        run_init=run_init,
+        patch_model=patch_model,
+        patch_optimizer=patch_optimizer,
+    )
+    return auditor
+
+
 def audit_step(
     auditor: Auditor,
     *,
-    every_n_steps: Optional[int] = None,
-    batch_extractor: Optional[Callable[..., Any]] = None,
+    every_n_steps: int | None = None,
+    batch_extractor: Callable[..., Any] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator to instrument a typical training-step function.
 
@@ -451,6 +761,8 @@ def audit_step(
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
         def wrapped(*args: Any, **kwargs: Any) -> Any:
+            step_before = auditor.step
+
             if every_n_steps is not None:
                 auditor.every_n_steps = max(1, int(every_n_steps))
 
@@ -461,14 +773,44 @@ def audit_step(
                 except Exception:
                     batch = None
 
+            # Keep last batch in sync (best-effort) so post-step audits have context.
+            if batch is not None:
+                auditor._last_batch = batch
+                auditor._data_audited_this_step = False
+
             # Run the step.
             out = fn(*args, **kwargs)
 
             # If we can, run a post-step audit (optimizer phase). This is best-effort.
             if auditor.optimizer is not None:
-                ctx = auditor._make_context(Phase.OPTIMIZER, step=None, batch=batch)
-                if auditor._should_audit(ctx.step, ctx.phase):
-                    auditor.runner.run_step(ctx)
+                if not auditor._attached:
+                    auditor.attach()
+
+                batch_for_ctx = batch if batch is not None else auditor._last_batch
+                ctx = auditor._make_context(
+                    Phase.OPTIMIZER, step=None, batch=batch_for_ctx
+                )
+
+                # Best-effort phase lifecycle callbacks.
+                try:
+                    auditor._call_phase_start(ctx)
+                except Exception:
+                    pass
+
+                try:
+                    if auditor._should_audit(ctx.step, ctx.phase):
+                        auditor.runner.run_step(ctx)
+                finally:
+                    try:
+                        auditor._call_phase_end(ctx)
+                    except Exception:
+                        pass
+
+            # Advance the step counter once per wrapped call unless it was
+            # advanced by something inside `fn` (e.g. `auditor.optimizer_step()`).
+            if auditor.step == step_before:
+                auditor.step += 1
+                auditor._data_audited_this_step = False
 
             return out
 

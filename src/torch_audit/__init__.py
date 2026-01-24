@@ -1,21 +1,17 @@
-from importlib.metadata import PackageNotFoundError, version
+"""torch-audit public package API."""
 
-try:
-    __version__ = version("torch-audit")
-except PackageNotFoundError:
-    __version__ = "0.0.0-dev"
-
-__all__ = ["__version__"]
-
+from .__about__ import __version__
 from .api import audit
-from .core import Phase, Severity, Finding, Rule, AuditResult
-from .runtime import Auditor, audit_dynamic, audit_step
+from .core import AuditResult, Finding, Phase, Rule, Severity
+from .runtime import Auditor, audit_dynamic, audit_step, autopatch
 
-__all__ += [
+__all__ = [
+    "__version__",
     "audit",
     "Auditor",
     "audit_dynamic",
     "audit_step",
+    "autopatch",
     "Phase",
     "Severity",
     "Finding",

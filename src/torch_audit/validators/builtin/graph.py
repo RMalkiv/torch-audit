@@ -1,6 +1,6 @@
 from collections import defaultdict
+from collections.abc import Generator
 from functools import partial
-from typing import Dict, Generator
 
 import torch.nn as nn
 
@@ -34,7 +34,7 @@ RuleRegistry.register(TA501_STATEFUL_REUSE)
 class GraphValidator(BaseValidator):
     def __init__(self):
         self.hooks = []
-        self.call_counts: Dict[str, int] = defaultdict(int)
+        self.call_counts: dict[str, int] = defaultdict(int)
         self._seen_forward: bool = False
         # Atomic modules we don't recurse into
         self.atomic_modules = (nn.MultiheadAttention, nn.LSTM, nn.GRU, nn.RNN)

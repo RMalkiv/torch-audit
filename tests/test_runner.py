@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from torch_audit.config import AuditConfig, Suppression
 from torch_audit.core import Finding, Phase, Rule, Severity
 from torch_audit.runner import INTERNAL_ERROR_RULE, AuditRunner
@@ -223,7 +225,8 @@ def test_baseline_edge_cases(audit_context, tmp_path):
     bad_json = tmp_path / "bad.json"
     bad_json.write_text("{ not json }")
     config_bad = AuditConfig(baseline_file=str(bad_json))
-    runner = AuditRunner(config_bad, [])
+    with pytest.warns(RuntimeWarning):
+        runner = AuditRunner(config_bad, [])
     assert runner.baseline_fingerprints == set()
 
     # 3. Wrong JSON Type (Dict instead of List) -> Safe (empty set)
@@ -259,3 +262,29 @@ def test_runner_phase_filtering(audit_context):
     runner = AuditRunner(AuditConfig(), [v_all])
     runner.run_step(audit_context)
     assert v_all.check_called is True
+
+
+def test_runner_normalizes_finding_phase_and_step(simple_model):
+    """Findings should be tagged with the context phase/step.
+
+    Many validators omit `phase` and/or `step` when creating findings.
+    The runner should normalize these fields so reporters don't show
+    misleading STATIC context for runtime checks.
+    """
+
+    from torch_audit.context import AuditContext, AuditState
+
+    ctx = AuditContext(
+        AuditState(model=simple_model, step=123, phase=Phase.FORWARD, batch=None)
+    )
+
+    f1 = Finding("MOCK001", "msg", Severity.ERROR)
+    validator = MockValidator(findings=[f1], supported_phases={Phase.FORWARD})
+
+    runner = AuditRunner(AuditConfig(), [validator])
+    runner.run_step(ctx)
+    result = runner.finish()
+
+    assert len(result.findings) == 1
+    assert result.findings[0].phase == Phase.FORWARD
+    assert result.findings[0].step == 123

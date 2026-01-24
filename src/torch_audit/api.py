@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Set, Union
+from typing import Any
 
 import torch
 
@@ -14,19 +14,19 @@ from .validator import BaseValidator
 def audit(
     model: torch.nn.Module,
     step: int = 0,
-    phase: Union[str, Phase] = Phase.STATIC,
-    fail_level: Union[str, Severity] = Severity.ERROR,
-    batch: Optional[Any] = None,
-    optimizer: Optional[torch.optim.Optimizer] = None,
-    validators: Optional[List[BaseValidator]] = None,
-    reporters: Optional[List[Reporter]] = None,
+    phase: str | Phase = Phase.STATIC,
+    fail_level: str | Severity = Severity.ERROR,
+    batch: Any | None = None,
+    optimizer: torch.optim.Optimizer | None = None,
+    validators: list[BaseValidator] | None = None,
+    reporters: list[Reporter] | None = None,
     show_report: bool = False,
     strict: bool = False,
-    baseline_file: Optional[str] = None,
+    baseline_file: str | None = None,
     update_baseline: bool = False,
     # CLI / filtering controls
-    select_rules: Optional[Set[str]] = None,
-    ignore_rules: Optional[Set[str]] = None,
+    select_rules: set[str] | None = None,
+    ignore_rules: set[str] | None = None,
     show_suppressed: bool = False,
     suppress_internal_errors: bool = False,
 ) -> AuditResult:
