@@ -1,16 +1,20 @@
-from .core.auditor import Auditor
-from .core.config import AuditConfig
-from .core.reporter import LogReporter, RichConsoleReporter
+"""torch-audit public package API."""
 
-from .callbacks import LightningAuditCallback, HFAuditCallback
-
-__version__ = "0.2.0"
+from .__about__ import __version__
+from .api import audit
+from .core import AuditResult, Finding, Phase, Rule, Severity
+from .runtime import Auditor, audit_dynamic, audit_step, autopatch
 
 __all__ = [
+    "__version__",
+    "audit",
     "Auditor",
-    "AuditConfig",
-    "LogReporter",
-    "RichConsoleReporter",
-    "LightningAuditCallback",
-    "HFAuditCallback"
+    "audit_dynamic",
+    "audit_step",
+    "autopatch",
+    "Phase",
+    "Severity",
+    "Finding",
+    "Rule",
+    "AuditResult",
 ]

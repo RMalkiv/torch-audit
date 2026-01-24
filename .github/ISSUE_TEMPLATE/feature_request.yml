@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest an idea or enhancement.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Please include enough context so we can understand the use-case.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to achieve? What is currently hard or impossible?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would you like torch-audit to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative approaches you've tried or thought about.
+    validations:
+      required: false
+
+  - type: input
+    id: context
+    attributes:
+      label: Extra context
+      description: Links, screenshots, references, etc.
+    validations:
+      required: false
